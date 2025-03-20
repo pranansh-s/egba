@@ -1,0 +1,8 @@
+[package]
+name = "egba-core"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+bit = "0.1.1"
+bitmatch = "0.1.1"

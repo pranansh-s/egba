@@ -1,0 +1,11 @@
+[package]
+name = "egba-debugger"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+ratatui = "0.29.0"
+egba-core = { path = "../egba-core" }
+crossterm = "0.28.1"
+bitmatch = "0.1.1"
+bit = "0.1.1"

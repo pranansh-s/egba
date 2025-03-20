@@ -1,0 +1,9 @@
+[workspace]
+members = [
+    "egba-core",
+    "egba-ui",
+    "egba-debugger",
+    "emulator",
+]
+
+resolver = "2"

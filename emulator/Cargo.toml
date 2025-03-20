@@ -1,0 +1,10 @@
+[package]
+name = "emulator"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+clap = { version = "4.5.17", features = ['cargo'] }
+egba-core = { path = "../egba-core" }
+egba-ui = { path = "../egba-ui" }
+egba-debugger = { path = "../egba-debugger" }
