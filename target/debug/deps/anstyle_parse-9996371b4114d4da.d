@@ -1,0 +1,9 @@
+/Users/prananshsingh/Desktop/rust/egba/target/debug/deps/libanstyle_parse-9996371b4114d4da.rmeta: /Users/prananshsingh/.cargo/registry/src/index.crates.io-6f17d22bba15001f/anstyle-parse-0.2.5/src/lib.rs /Users/prananshsingh/.cargo/registry/src/index.crates.io-6f17d22bba15001f/anstyle-parse-0.2.5/src/params.rs /Users/prananshsingh/.cargo/registry/src/index.crates.io-6f17d22bba15001f/anstyle-parse-0.2.5/src/state/mod.rs /Users/prananshsingh/.cargo/registry/src/index.crates.io-6f17d22bba15001f/anstyle-parse-0.2.5/src/state/definitions.rs /Users/prananshsingh/.cargo/registry/src/index.crates.io-6f17d22bba15001f/anstyle-parse-0.2.5/src/state/table.rs
+
+/Users/prananshsingh/Desktop/rust/egba/target/debug/deps/anstyle_parse-9996371b4114d4da.d: /Users/prananshsingh/.cargo/registry/src/index.crates.io-6f17d22bba15001f/anstyle-parse-0.2.5/src/lib.rs /Users/prananshsingh/.cargo/registry/src/index.crates.io-6f17d22bba15001f/anstyle-parse-0.2.5/src/params.rs /Users/prananshsingh/.cargo/registry/src/index.crates.io-6f17d22bba15001f/anstyle-parse-0.2.5/src/state/mod.rs /Users/prananshsingh/.cargo/registry/src/index.crates.io-6f17d22bba15001f/anstyle-parse-0.2.5/src/state/definitions.rs /Users/prananshsingh/.cargo/registry/src/index.crates.io-6f17d22bba15001f/anstyle-parse-0.2.5/src/state/table.rs
+
+/Users/prananshsingh/.cargo/registry/src/index.crates.io-6f17d22bba15001f/anstyle-parse-0.2.5/src/lib.rs:
+/Users/prananshsingh/.cargo/registry/src/index.crates.io-6f17d22bba15001f/anstyle-parse-0.2.5/src/params.rs:
+/Users/prananshsingh/.cargo/registry/src/index.crates.io-6f17d22bba15001f/anstyle-parse-0.2.5/src/state/mod.rs:
+/Users/prananshsingh/.cargo/registry/src/index.crates.io-6f17d22bba15001f/anstyle-parse-0.2.5/src/state/definitions.rs:
+/Users/prananshsingh/.cargo/registry/src/index.crates.io-6f17d22bba15001f/anstyle-parse-0.2.5/src/state/table.rs:

@@ -93,11 +93,13 @@ impl CPU {
             bit_r!(inst, 7..12)
         } as u8;
 
+        let val = if rm == PC_INDEX && inst.bit(4) { self.reg[rm].wrapping_add(4) } else { self.reg[rm] };
+
         match ShiftType::from_bits(shift_type) {
-            ShiftType::LSL => self.LSL(self.reg[rm], rotate, s),
-            ShiftType::LSR => self.LSR(self.reg[rm], rotate, s),
-            ShiftType::ASR => self.ASR(self.reg[rm], rotate, s),
-            ShiftType::ROR => self.ROR(self.reg[rm], rotate, s),
+            ShiftType::LSL => self.LSL(val, rotate, s),
+            ShiftType::LSR => self.LSR(val, rotate, s),
+            ShiftType::ASR => self.ASR(val, rotate, s),
+            ShiftType::ROR => self.ROR(val, rotate, s),
         }
     }
 

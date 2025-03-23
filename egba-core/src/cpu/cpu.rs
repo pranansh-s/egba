@@ -67,12 +67,12 @@ impl CPU {
             return;
         }
 
-        self.banks[old_bank_index].sp = self.reg[13];
-        self.banks[old_bank_index].lr = self.reg[14];
+        self.banks[old_bank_index].sp = self.reg[SP_INDEX];
+        self.banks[old_bank_index].lr = self.reg[LR_INDEX];
         self.banks[old_bank_index].spsr = self.spsr;
         
-        self.reg[13] = self.banks[new_bank_index].sp;
-        self.reg[14] = self.banks[new_bank_index].lr;
+        self.reg[SP_INDEX] = self.banks[new_bank_index].sp;
+        self.reg[LR_INDEX] = self.banks[new_bank_index].lr;
         self.spsr = self.banks[new_bank_index].spsr;
 
         if self.cpsr.mode == OperatingMode::fiq || mode == OperatingMode::fiq {
@@ -123,6 +123,5 @@ impl CPU {
         };
 
         self.pipeline[1] = self.fetch(bus);
-        self.pipeline[2] = self.fetch(bus);
     }
 }

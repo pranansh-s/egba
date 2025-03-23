@@ -1,0 +1,11 @@
+/Users/prananshsingh/Desktop/rust/egba/target/debug/deps/libbitflags-cb3494e731031cdb.rmeta: /Users/prananshsingh/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bitflags-2.8.0/src/lib.rs /Users/prananshsingh/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bitflags-2.8.0/src/iter.rs /Users/prananshsingh/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bitflags-2.8.0/src/parser.rs /Users/prananshsingh/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bitflags-2.8.0/src/traits.rs /Users/prananshsingh/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bitflags-2.8.0/src/public.rs /Users/prananshsingh/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bitflags-2.8.0/src/internal.rs /Users/prananshsingh/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bitflags-2.8.0/src/external.rs
+
+/Users/prananshsingh/Desktop/rust/egba/target/debug/deps/bitflags-cb3494e731031cdb.d: /Users/prananshsingh/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bitflags-2.8.0/src/lib.rs /Users/prananshsingh/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bitflags-2.8.0/src/iter.rs /Users/prananshsingh/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bitflags-2.8.0/src/parser.rs /Users/prananshsingh/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bitflags-2.8.0/src/traits.rs /Users/prananshsingh/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bitflags-2.8.0/src/public.rs /Users/prananshsingh/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bitflags-2.8.0/src/internal.rs /Users/prananshsingh/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bitflags-2.8.0/src/external.rs
+
+/Users/prananshsingh/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bitflags-2.8.0/src/lib.rs:
+/Users/prananshsingh/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bitflags-2.8.0/src/iter.rs:
+/Users/prananshsingh/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bitflags-2.8.0/src/parser.rs:
+/Users/prananshsingh/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bitflags-2.8.0/src/traits.rs:
+/Users/prananshsingh/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bitflags-2.8.0/src/public.rs:
+/Users/prananshsingh/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bitflags-2.8.0/src/internal.rs:
+/Users/prananshsingh/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/bitflags-2.8.0/src/external.rs:

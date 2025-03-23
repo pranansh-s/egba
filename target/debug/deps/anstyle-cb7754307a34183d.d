@@ -1,0 +1,10 @@
+/Users/prananshsingh/Desktop/rust/egba/target/debug/deps/libanstyle-cb7754307a34183d.rmeta: /Users/prananshsingh/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/anstyle-1.0.8/src/lib.rs /Users/prananshsingh/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/anstyle-1.0.8/src/macros.rs /Users/prananshsingh/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/anstyle-1.0.8/src/color.rs /Users/prananshsingh/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/anstyle-1.0.8/src/effect.rs /Users/prananshsingh/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/anstyle-1.0.8/src/reset.rs /Users/prananshsingh/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/anstyle-1.0.8/src/style.rs
+
+/Users/prananshsingh/Desktop/rust/egba/target/debug/deps/anstyle-cb7754307a34183d.d: /Users/prananshsingh/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/anstyle-1.0.8/src/lib.rs /Users/prananshsingh/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/anstyle-1.0.8/src/macros.rs /Users/prananshsingh/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/anstyle-1.0.8/src/color.rs /Users/prananshsingh/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/anstyle-1.0.8/src/effect.rs /Users/prananshsingh/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/anstyle-1.0.8/src/reset.rs /Users/prananshsingh/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/anstyle-1.0.8/src/style.rs
+
+/Users/prananshsingh/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/anstyle-1.0.8/src/lib.rs:
+/Users/prananshsingh/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/anstyle-1.0.8/src/macros.rs:
+/Users/prananshsingh/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/anstyle-1.0.8/src/color.rs:
+/Users/prananshsingh/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/anstyle-1.0.8/src/effect.rs:
+/Users/prananshsingh/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/anstyle-1.0.8/src/reset.rs:
+/Users/prananshsingh/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/anstyle-1.0.8/src/style.rs:

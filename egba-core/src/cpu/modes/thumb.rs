@@ -9,27 +9,28 @@ impl CPU {
         #[bitmatch]
         match inst.bit_range(0..16) {
             "0001_11??_????_????" => self.thumb_format2(inst.bit(10), inst.bit(9), bit_r!(inst, 6..9), bit_r!(inst, 3..6), bit_r!(inst, 0..3)),
-            "000?_????_????_????" => self.thumb_format1(bit_r!(inst, 11..13), bit_r!(inst, 6..11), bit_r!(inst, 3..6), bit_r!(inst, 0..3)),
-            "001?_????_????_????" => self.thumb_format3(bit_r!(inst, 11..13), bit_r!(inst, 8..11), bit_r!(inst, 0..8) as u8),
             "0100_00??_????_????" => self.thumb_format4(bit_r!(inst, 6..10), bit_r!(inst, 3..6), bit_r!(inst, 0..3)),
             "0100_01??_????_????" => self.thumb_format5(bus, bit_r!(inst, 8..10), inst.bit(7), inst.bit(6), bit_r!(inst, 3..6), bit_r!(inst, 0..3)),
-
-            "0100_1???_????_????" => self.thumb_format6(bus, bit_r!(inst, 8..11), bit_r!(inst, 0..8) as u32),
+            
             "0101_??0?_????_????" => self.thumb_format7(bus, inst.bit(11), inst.bit(10), bit_r!(inst, 6..9), bit_r!(inst, 3..6), bit_r!(inst, 0..3)),
             "0101_??1?_????_????" => self.thumb_format8(bus, inst.bit(11), inst.bit(10), bit_r!(inst, 6..9), bit_r!(inst, 3..6), bit_r!(inst, 0..3)),
-            "011?_????_????_????" => self.thumb_format9(bus, inst.bit(12), inst.bit(11), bit_r!(inst, 6..11), bit_r!(inst, 3..6), bit_r!(inst, 0..3)),
-            "1000_????_????_????" => self.thumb_format10(bus, inst.bit(11), bit_r!(inst, 6..11), bit_r!(inst, 3..6), bit_r!(inst, 0..3)),
-
-            "1001_????_????_????" => self.thumb_format11(bus, inst.bit(11), bit_r!(inst, 8..11), bit_r!(inst, 0..8)),
-            "1010_????_????_????" => self.thumb_format12(inst.bit(11), bit_r!(inst, 8..11), bit_r!(inst, 0..8) as u32),
+            
             "1011_0000_????_????" => self.thumb_format13(inst.bit(7), bit_r!(inst, 0..7) as u32),
             "1011_?10?_????_????" => self.thumb_format14(bus, inst.bit(11), inst.bit(8), bit_r!(inst, 0..8) as u16),
-            "1100_????_????_????" => self.thumb_format15(bus, inst.bit(11), bit_r!(inst, 8..11), bit_r!(inst, 0..8) as u8),
             
+            "000?_????_????_????" => self.thumb_format1(bit_r!(inst, 11..13), bit_r!(inst, 6..11), bit_r!(inst, 3..6), bit_r!(inst, 0..3)),
+            "001?_????_????_????" => self.thumb_format3(bit_r!(inst, 11..13), bit_r!(inst, 8..11), bit_r!(inst, 0..8) as u8),
+            "0100_1???_????_????" => self.thumb_format6(bus, bit_r!(inst, 8..11), bit_r!(inst, 0..8) as u32),
+            "011?_????_????_????" => self.thumb_format9(bus, inst.bit(12), inst.bit(11), bit_r!(inst, 6..11), bit_r!(inst, 3..6), bit_r!(inst, 0..3)),
+            "1000_????_????_????" => self.thumb_format10(bus, inst.bit(11), bit_r!(inst, 6..11), bit_r!(inst, 3..6), bit_r!(inst, 0..3)),
+            "1001_????_????_????" => self.thumb_format11(bus, inst.bit(11), bit_r!(inst, 8..11), bit_r!(inst, 0..8)),
+            "1010_????_????_????" => self.thumb_format12(inst.bit(11), bit_r!(inst, 8..11), bit_r!(inst, 0..8) as u32),
+            "1100_????_????_????" => self.thumb_format15(bus, inst.bit(11), bit_r!(inst, 8..11), bit_r!(inst, 0..8) as u8),
+
+            "1101_????_????_????" => self.thumb_format16(bus, bit_r!(inst, 8..12), bit_r!(inst, 0..8) as u8),
             "1110_0???_????_????" => self.thumb_format18(bus, bit_r!(inst, 0..11)),
             "1111_????_????_????" => self.thumb_format19(bus, inst.bit(11), bit_r!(inst, 0..11)),
             "1101_1111_????_????" => self.enter_exception(Exception::SoftwareInterrupt, self.thumb_pc().wrapping_add(2)),
-            "1101_????_????_????" => self.thumb_format16(bus, bit_r!(inst, 8..12), bit_r!(inst, 0..8) as u8),
             _ => self.enter_exception(Exception::Undefined, self.thumb_pc().wrapping_add(2))
         }
     }
@@ -211,14 +212,14 @@ impl CPU {
         if !self.condition_check(cond) {
             return;
         }
-        let offset = (offset as i32) << 1;
-        self.reg[PC_INDEX] = self.thumb_pc().wrapping_add(offset as u32);
+        let offset = ((offset as i8) as i32) << 1;
+        self.reg[PC_INDEX] = self.reg[PC_INDEX].wrapping_add(offset as u32);
         self.flush_pipeline(bus);
     }
 
     fn thumb_format18(&mut self, bus: &mut impl Bus, offset: usize) {
-        let offset = (offset as i32) << 1;
-        self.reg[PC_INDEX] = self.thumb_pc().wrapping_add(offset as u32);
+        let offset = ((offset << 21) as i32) >> 20;
+        self.reg[PC_INDEX] = self.reg[PC_INDEX].wrapping_add(offset as u32);
         self.flush_pipeline(bus);
     }
 
@@ -230,8 +231,8 @@ impl CPU {
             self.flush_pipeline(bus);
         }
         else {
-            let offset = (offset as i32) << 12;
-            self.reg[LR_INDEX] = self.thumb_pc().wrapping_add(offset as u32);
+            let offset = ((offset << 21) as i32) >> 9;
+            self.reg[LR_INDEX] = self.reg[PC_INDEX].wrapping_add(offset as u32);
         }
     }
 }

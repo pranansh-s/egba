@@ -25,17 +25,17 @@ impl CPU {
             
             "0001_0?00_1111_????_0000_0000_0000" => self.arm_MRS(inst.bit(22), bit_r!(inst, 12..16)),
             "00?1_0?10_100?_1111_????_????_????" => self.arm_MSR(inst.bit(25), inst.bit(22), !inst.bit(16), bit_r!(inst, 0..12)),
-            
+
+            "011?_????_????_????_????_???1_????" => self.enter_exception(Exception::Undefined, self.arm_pc().wrapping_add(4)),
             "100?_???1_????_????_????_????_????" => self.arm_LDM_STM(bus, inst.bit(20), inst.bit(24), inst.bit(23), inst.bit(22), inst.bit(21), bit_r!(inst, 16..20), bit_r!(inst, 0..16) as u16),
             
             "0001_0?00_????_????_0000_1001_????" => self.arm_SWP(bus, inst.bit(22), bit_r!(inst, 16..20), bit_r!(inst, 12..16), bit_r!(inst, 0..4)),
-            "00??_????_????_????_????_????_????" => self.arm_data_proc(bus, inst.bit(25), bit_r!(inst, 21..25), inst.bit(20), bit_r!(inst, 16..20), bit_r!(inst, 12..16), bit_r!(inst, 0..12)),
             "000?_????_????_????_????_1??1_????" => self.arm_LDRH_LDRSB_LDRSH_STRH(bus, inst.bit(24), inst.bit(23), inst.bit(22), inst.bit(21), inst.bit(20), bit_r!(inst, 16..20), bit_r!(inst, 12..16), bit_r!(inst, 8..12), inst.bit(6), inst.bit(5), bit_r!(inst, 0..4)),
             
-            "1111_????_????_????_????_????_????" => self.enter_exception(Exception::SoftwareInterrupt, self.arm_pc().wrapping_add(4)),
-            "011?_????_????_????_????_???1_????" => self.enter_exception(Exception::Undefined, self.arm_pc().wrapping_add(4)),
-            
+            "00??_????_????_????_????_????_????" => self.arm_data_proc(bus, inst.bit(25), bit_r!(inst, 21..25), inst.bit(20), bit_r!(inst, 16..20), bit_r!(inst, 12..16), bit_r!(inst, 0..12)),
             "01??_????_????_????_????_????_????" => self.arm_LDR_STR(bus, inst.bit(20), inst.bit(25), inst.bit(24), inst.bit(23), inst.bit(22), inst.bit(21), bit_r!(inst, 16..20), bit_r!(inst, 12..16), bit_r!(inst, 0..12)),
+
+            "1111_????_????_????_????_????_????" => self.enter_exception(Exception::SoftwareInterrupt, self.arm_pc().wrapping_add(4)),
             _ => self.enter_exception(Exception::Undefined, self.arm_pc().wrapping_add(4))
         }
     }
@@ -51,15 +51,15 @@ impl CPU {
     }
 
     fn arm_B(&mut self, bus: &mut impl Bus, offset: usize) {
-        let offset = (offset as i32) << 2;
-        self.reg[PC_INDEX] = ((self.arm_pc() as i32) + offset) as u32;
+        let offset = ((offset << 8) as i32) >> 6;
+        self.reg[PC_INDEX] = ((self.reg[PC_INDEX] as i32) + offset) as u32;
         self.flush_pipeline(bus);
     }
 
     fn arm_BL(&mut self, bus: &mut impl Bus, offset: usize) {
-        let offset = (offset as i32) << 2;
+        let offset = ((offset << 8) as i32) >> 6;
         self.reg[LR_INDEX] = self.arm_pc().wrapping_add(4);
-        self.reg[PC_INDEX] = ((self.arm_pc() as i32) + offset) as u32;
+        self.reg[PC_INDEX] = ((self.reg[PC_INDEX] as i32) + offset) as u32;
         self.flush_pipeline(bus);
     }
 
@@ -80,36 +80,43 @@ impl CPU {
         else {
             self.reg[bit_r!(op, 0..4)]
         };
-        let mask = if f { 0xF000_0000 } else { 0xF00000DF };
+        let mask = if f { 0xF000_0000 } else { 0xF000_00DF };
 
         if p {
             self.spsr = (self.spsr & !mask) | (bits & mask);
         }
         else {
-            self.cpsr = ProgramStatusRegister::from((u32::from(self.cpsr) & !mask) | (bits & mask));
+            let cpsr = ProgramStatusRegister::from((u32::from(self.cpsr) & !mask) | (bits & mask));
+            self.set_mode(cpsr.mode);
+            self.cpsr = cpsr;
         }
     }
 
-    fn arm_data_proc(&mut self, bus: &mut impl Bus, i: bool, opcode: usize, s: bool, rn: usize, rd: usize, op2: usize) {
-        let op = self.reg[rn];
+    fn arm_data_proc(&mut self, bus: &mut impl Bus, i: bool, opcode: usize, s: bool, rn: usize, rd: usize, operand2: usize) {
+        let mut op = self.reg[rn];
+        let update_cpsr = s && rd != PC_INDEX;
         let op2 = if i {
-            let imm = bit_r!(op2, 0..8) as u32;
-            let rotate = 2 * bit_r!(op2, 8..12) as u8;
-            self.ROR(imm, rotate, s)
+            let imm = bit_r!(operand2, 0..8) as u32;
+            let rotate = 2 * bit_r!(operand2, 8..12) as u8;
+            self.ROR(imm, rotate, update_cpsr)
         }
         else {
-            self.shift_by_reg(op2, s)
+            self.shift_by_reg(operand2, update_cpsr)
         };
+
+        if rn == PC_INDEX && operand2.bit(4) {
+            op = op.wrapping_add(4);
+        }
 
         let res = match opcode {
             0b0000 => self.AND(op, op2),
             0b0001 => self.EOR(op, op2),
-            0b0010 => self.SUB(op, op2, s),
-            0b0011 => self.SUB(op2, op, s),
-            0b0100 => self.ADD(op, op2, s),
-            0b0101 => self.ADC(op, op2, s, self.cpsr.c_condition_bit),
-            0b0110 => self.SBC(op, op2, s, self.cpsr.c_condition_bit),
-            0b0111 => self.SBC(op2, op, s, self.cpsr.c_condition_bit),
+            0b0010 => self.SUB(op, op2, update_cpsr),
+            0b0011 => self.SUB(op2, op, update_cpsr),
+            0b0100 => self.ADD(op, op2, update_cpsr),
+            0b0101 => self.ADC(op, op2, update_cpsr, self.cpsr.c_condition_bit),
+            0b0110 => self.SBC(op, op2, update_cpsr, self.cpsr.c_condition_bit),
+            0b0111 => self.SBC(op2, op, update_cpsr, self.cpsr.c_condition_bit),
             0b1000 => self.AND(op, op2), 
             0b1001 => self.EOR(op, op2),
             0b1010 => self.SUB(op, op2, true),
@@ -121,13 +128,13 @@ impl CPU {
             _ => unreachable!()
         };
 
-        if s || is_test(opcode) {
+        if update_cpsr || is_test(opcode) {
             self.set_NZ(res);
         }
 
         if !is_test(opcode) {
             self.reg[rd] = res;
-            if rd == PC_INDEX && s {
+            if s && rd == PC_INDEX && self.cpsr.mode != OperatingMode::usr  && self.cpsr.mode != OperatingMode::sys {
                 self.restore_spsr();
             }
 
@@ -146,7 +153,7 @@ impl CPU {
         };
 
         let addr = match (p, u) {
-            (false, true) | (false, false) => self.reg[rn],
+            (false, _) => self.reg[rn],
             (true, true) => self.reg[rn].wrapping_add(shift),
             (true, false) => self.reg[rn].wrapping_sub(shift),
         };
@@ -257,7 +264,7 @@ impl CPU {
                     bus.write_word(addr, val);
                 }
 
-                if r == PC_INDEX && s && l {
+                if r == PC_INDEX && s && l && self.cpsr.mode != OperatingMode::usr && self.cpsr.mode != OperatingMode::sys {
                     self.restore_spsr();
                 }
 

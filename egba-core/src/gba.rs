@@ -9,8 +9,9 @@ impl GBA {
     pub fn new(bios: Bios, cartridge: Cartridge) -> Self {
         let mut cpu = CPU::new();
         let mut memory = Memory::new(bios, cartridge);
-
-        cpu.flush_pipeline(&mut memory);
+        
+        cpu.pipeline[1] = cpu.fetch(&mut memory);
+        cpu.pipeline[2] = cpu.fetch(&mut memory);
         Self {
             cpu,
             memory,

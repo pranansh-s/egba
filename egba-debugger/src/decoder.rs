@@ -6,6 +6,10 @@ use egba_core::{bit_r, cpu::{ShiftType, alu::is_test, alu::is_single_operand}};
 pub fn arm_decode(instr: u32) -> String {
     #[bitmatch]
     match bit_r!(instr, 0..28) {
+        //BX 
+        "0001_0010_1111_1111_1111_0001_????" => {
+            format!("BX {}", ((bit_r!(instr, 0..24) as i32) << 8) >> 6)
+        },
         //B_BL
         "101?_????_????_????_????_????_????" => {
             let l = if instr.bit(24) { "L" } else { "" };
@@ -38,6 +42,20 @@ pub fn arm_decode(instr: u32) -> String {
             let rm = &format!("R{:02}", bit_r!(instr, 0..4));
             let rn = &format!("R{:02}", bit_r!(instr, 16..20));
             format!("SWP{b} {rd}, {rm}, [{rn}]")
+        },
+        //LDM_STM
+        "100?_????_????_????_????_????_????" => {
+            let opcode = if instr.bit(20) { "LDM" } else { "STM" };
+            let p = if instr.bit(24) { "B" } else { "A" };
+            let u = if instr.bit(23) { "I" } else { "D" };
+            let s = if instr.bit(22) { "^" } else { "" };
+            let w = if instr.bit(21) { "!" } else { "" };
+            let rlist = (0..16).filter(|&i| bit_r!(instr, 0..16) & (1 << i) != 0).map(|i| format!("R{:02}", i)).collect::<Vec<_>>().join(", ");
+            format!("{opcode}{u}{p} R{:02}{w}, {{{rlist}}}{s}", bit_r!(instr, 16..20))
+        },
+        //LDRH_LDRSH_LDRSB_STRH
+        "000?_????_????_????_????_1??1_????" => {
+            format!("LDRH/LDRSH/LDRSB/STRH ????")
         },
         //Data Processing
         "00??_????_????_????_????_????_????" => {
@@ -79,16 +97,6 @@ pub fn arm_decode(instr: u32) -> String {
             let operands = [rd, rn, op2].iter().filter(|s| !s.is_empty()).cloned().collect::<Vec<_>>().join(", ");
             format!("{opcode}{s} {operands}")
         },
-        //LDM_STM
-        "100?_????_????_????_????_????_????" => {
-            let opcode = if instr.bit(20) { "LDM" } else { "STM" };
-            let p = if instr.bit(24) { "B" } else { "A" };
-            let u = if instr.bit(23) { "I" } else { "D" };
-            let s = if instr.bit(22) { "^" } else { "" };
-            let w = if instr.bit(21) { "!" } else { "" };
-            let rlist = (0..16).filter(|&i| bit_r!(instr, 0..16) & (1 << i) != 0).map(|i| format!("R{:02}", i)).collect::<Vec<_>>().join(", ");
-            format!("{opcode}{u}{p} R{:02}{w}, {{{rlist}}}{s}", bit_r!(instr, 16..20))
-        },
         //LDR_STR
         "01??_????_????_????_????_????_????" => {
             let opcode = if instr.bit(20) { "LDR" } else { "STR" };
@@ -111,10 +119,6 @@ pub fn arm_decode(instr: u32) -> String {
 
             let pre = if instr.bit(24) { "]" } else { "" };
             format!("{opcode}{b}{t} {rd}, [{rn}{p}{u}{exp}{pre}{w}")
-        },
-        //LDRH_LDRSH_LDRSB_STRH
-        "000?_????_????_????_????_1??1_????" => {
-            format!("LDRH/LDRSH/LDRSB/STRH ????")
         },
         //SWI
         "1111_????_????_????_????_????_????" => "SWI".to_string(),
@@ -204,6 +208,23 @@ pub fn thumb_decode(instr: u32) -> String {
             let imm = format!("#{}", bit_r!(instr, 0..8) << 2);
             format!("LDR {rd}, [PC, {imm}]")
         },
+        //7
+        // "0101_??0?_????_????" => {
+
+        // },
+        //8
+        // "0101_??1?_????_????" => {
+
+        // },
+        //9
+        "011?_????_????_????" => {
+            let opcode = if instr.bit(11) { "LDR" } else { "STR" };
+            let b = if instr.bit(12) { "B" } else { "" };
+            let rd = format!("R{:02}", bit_r!(instr, 0..3));
+            let rb = format!("R{:02}", bit_r!(instr, 3..6));
+            let imm = format!("#{}", bit_r!(instr, 6..11) << 2);
+            format!("{opcode}{b} {rd}, [{rb}, {imm}]")
+        },
         //10
         "1000_????_????_????" => {
             let opcode = if instr.bit(11) { "LDRH" } else { "STRH" };
@@ -212,14 +233,50 @@ pub fn thumb_decode(instr: u32) -> String {
             let imm = format!("#{}", bit_r!(instr, 6..11) << 1);
             format!("{opcode} {rd}, [{rb}, {imm}]")
         },
+        //11
+        "1001_????_????_????" => {
+            let opcode = if instr.bit(11) { "LDR" } else { "STR" };
+            let rd = format!("R{:02}", bit_r!(instr, 0..8));
+            let imm = format!("#{}", bit_r!(instr, 0..8) << 2);
+            format!("{opcode} {rd}, [SP, {imm}]")
+        },
+        //12
+        "1010_????_????_????" => {
+            let rd = format!("R{:02}", bit_r!(instr, 8..11));
+            let rb = if instr.bit(11) { "SP" } else { "PC" };
+            let imm = format!("#{}", bit_r!(instr, 0..8) << 2);
+            format!("ADD {rd}, {rb}, {imm}")
+        },
+        //13
+        "1011_0000_????_????" => {
+            let sign = if instr.bit(7) { "-" } else { "" };
+            let imm = format!("#{sign}{}", bit_r!(instr, 6..11) << 2);
+            format!("ADD SP, {imm}")
+        },
+        //14
+        "1011_?10?_????_????" => {
+            let opcode = if instr.bit(11) { "POP" } else { "PUSH" };
+            let rlist = (0..8).filter(|&i| bit_r!(instr, 0..8) & (1 << i) != 0).map(|i| format!("R{:02}", i)).collect::<Vec<_>>().join(", ");
+            let other = if instr.bit(8) && instr.bit(11) { ", PC" } else if instr.bit(8) { ", LR" } else { "" };
+            format!("{opcode} {{{rlist}{other}}}")
+        },
+        //15
+        "1100_????_????_????" => {
+            let opcode = if instr.bit(11) { "LDMIA" } else { "STMIA" };
+            let rb = format!("R{:02}!", bit_r!(instr, 8..11));
+            let rlist = (0..8).filter(|&i| bit_r!(instr, 0..8) & (1 << i) != 0).map(|i| format!("R{:02}", i)).collect::<Vec<_>>().join(", ");
+            format!("{opcode} {rb}, {{{rlist}}}")
+        },
         //18
         "1110_0???_????_????" => {
-            format!("B {}", (bit_r!(instr, 0..11) as i32) << 1)
+            format!("B {}", ((bit_r!(instr, 0..11) << 21) as i32) >> 20)
         },
+        //19
         //17
         "1101_1111_????_????" => {
             format!("SWI {}", bit_r!(instr, 0..8))
         },
+        //16
         _ => "????".to_string()
     }
 }

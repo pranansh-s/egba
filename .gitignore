@@ -1,1 +1,9 @@
-./target
+/target
+
+/egba-core/target
+/egba-debugger/target
+/egba-ui/target
+
+/emulator/target
+
+/roms
