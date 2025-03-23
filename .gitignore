@@ -1,7 +1,7 @@
+.DS_Store
 /target
 
 /egba-core/target
-/egba-debugger/target
 /egba-ui/target
 
 /emulator/target
