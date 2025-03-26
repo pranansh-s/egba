@@ -1,11 +1,11 @@
 use std::{io::{stdout, Write}, process::Command};
 
 use crossterm::{terminal, ExecutableCommand};
-use decoder::{arm_decode, thumb_decode};
 use egba_core::{cpu::psr::OperatingState, gba::GBA};
 use ratatui::{layout::{Constraint, Direction, Layout}, prelude::CrosstermBackend, widgets::{Block, Borders, List, ListItem, Paragraph}, Terminal};
 
 mod decoder;
+use decoder::{arm::arm_decode, thumb::thumb_decode};
 
 pub trait EGBADebugger {
     fn show_stats(&mut self) {}

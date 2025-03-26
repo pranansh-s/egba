@@ -1,9 +1,4 @@
-.DS_Store
-/target
-
-/egba-core/target
-/egba-ui/target
-
-/emulator/target
+**/.DS_Store
+**/target
 
 /roms

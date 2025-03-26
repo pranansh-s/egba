@@ -15,13 +15,9 @@ impl CPU {
             "0001_0010_1111_1111_1111_0001_????" => self.arm_BX(bus, bit_r!(inst, 0..4)),
             "1010_????_????_????_????_????_????" => self.arm_B(bus, bit_r!(inst, 0..24)),
             "1011_????_????_????_????_????_????" => self.arm_BL(bus, bit_r!(inst, 0..24)),
-            "0000_000?_????_????_????_1001_????" => self.arm_MUL(inst.bit(20), bit_r!(inst, 16..20), bit_r!(inst, 8..12), bit_r!(inst, 0..4)),
-            "0000_001?_????_????_????_1001_????" => self.arm_MLA(inst.bit(20), bit_r!(inst, 16..20), bit_r!(inst, 12..16), bit_r!(inst, 8..12), bit_r!(inst, 0..4)),
+            "0000_00??_????_????_????_1001_????" => self.arm_MUL_MLA(inst.bit(21), inst.bit(20), bit_r!(inst, 16..20), bit_r!(inst, 12..16), bit_r!(inst, 8..12), bit_r!(inst, 0..4)),
             
-            "0000_100?_????_????_????_1001_????" => self.arm_UMULL(inst.bit(20), bit_r!(inst, 16..20), bit_r!(inst, 12..16), bit_r!(inst, 8..12), bit_r!(inst, 0..4)),
-            "0000_101?_????_????_????_1001_????" => self.arm_UMLAL(inst.bit(20), bit_r!(inst, 16..20), bit_r!(inst, 12..16), bit_r!(inst, 8..12), bit_r!(inst, 0..4)),
-            "0000_110?_????_????_????_1001_????" => self.arm_SMULL(inst.bit(20), bit_r!(inst, 16..20), bit_r!(inst, 12..16), bit_r!(inst, 8..12), bit_r!(inst, 0..4)),
-            "0000_111?_????_????_????_1001_????" => self.arm_SMLAL(inst.bit(20), bit_r!(inst, 16..20), bit_r!(inst, 12..16), bit_r!(inst, 8..12), bit_r!(inst, 0..4)),
+            "0000_1???_????_????_????_1001_????" => self.arm_UMULL_UMLAL_SMULL_SMLAL(inst.bit(22), inst.bit(21), inst.bit(20), bit_r!(inst, 16..20), bit_r!(inst, 12..16), bit_r!(inst, 8..12), bit_r!(inst, 0..4)),
             
             "0001_0?00_1111_????_0000_0000_0000" => self.arm_MRS(inst.bit(22), bit_r!(inst, 12..16)),
             "00?1_0?10_100?_1111_????_????_????" => self.arm_MSR(inst.bit(25), inst.bit(22), !inst.bit(16), bit_r!(inst, 0..12)),
@@ -290,17 +286,9 @@ impl CPU {
         }
     }
 
-    fn arm_MUL(&mut self, s: bool, rd: usize, rs: usize, rm: usize) {
-        let prod = self.reg[rm].wrapping_mul(self.reg[rs]);
-        self.reg[rd] = prod;
-
-        if s {
-            self.set_NZ(prod);
-        }
-    }
-
-    fn arm_MLA(&mut self, s: bool, rd: usize, rn: usize, rs: usize, rm: usize) {
-        let prod = self.reg[rm].wrapping_mul(self.reg[rs]).wrapping_add(self.reg[rn]);
+    fn arm_MUL_MLA(&mut self, a: bool, s: bool, rd: usize, rn: usize, rs: usize, rm: usize) {
+        let acc = if a { self.reg[rn] } else { 0 };
+        let prod = self.reg[rm].wrapping_mul(self.reg[rs]).wrapping_add(acc);
         self.reg[rd] = prod;
         
         if s {
@@ -308,40 +296,14 @@ impl CPU {
         }
     }
 
-    fn arm_UMULL(&mut self, s: bool, rd_hi: usize, rd_lo: usize, rs: usize, rm: usize) {
-        let prod = (self.reg[rs] as u64).wrapping_mul(self.reg[rm] as u64);
-        self.reg[rd_hi] = (prod >> 32) as u32;
-        self.reg[rd_lo] = prod as u32;
-
-        if s {
-            self.set_NZ_64(prod);
+    fn arm_UMULL_UMLAL_SMULL_SMLAL(&mut self, u: bool, a: bool, s: bool, rd_hi: usize, rd_lo: usize, rs: usize, rm: usize) {
+        let acc = if a { (self.reg[rd_hi] as u64) << 32 | (self.reg[rd_lo] as u64) } else { 0 };
+        let prod = if u {
+            ((self.reg[rs] as i32 as i64).wrapping_mul(self.reg[rm] as i32 as i64) as u64).wrapping_add(acc)
         }
-    }
-
-    fn arm_UMLAL(&mut self, s: bool, rd_hi: usize, rd_lo: usize, rs: usize, rm: usize) {
-        let acc = (self.reg[rd_hi] as u64) << 32 | (self.reg[rd_lo] as u64);
-        let prod = (self.reg[rs] as u64).wrapping_mul(self.reg[rm] as u64).wrapping_add(acc);
-        self.reg[rd_hi] = (prod >> 32) as u32;
-        self.reg[rd_lo] = prod as u32;
-
-        if s {
-            self.set_NZ_64(prod);
-        }
-    }
-
-    fn arm_SMULL(&mut self, s: bool, rd_hi: usize, rd_lo: usize, rs: usize, rm: usize) {
-        let prod = (self.reg[rs] as i32 as i64).wrapping_mul(self.reg[rm] as i32 as i64) as u64;
-        self.reg[rd_hi] = (prod >> 32) as u32;
-        self.reg[rd_lo] = prod as u32;
-
-        if s {
-            self.set_NZ_64(prod);
-        }
-    }
-
-    fn arm_SMLAL(&mut self, s: bool, rd_hi: usize, rd_lo: usize, rs: usize, rm: usize) {
-        let acc = (self.reg[rd_hi] as u64) << 32 | (self.reg[rd_lo] as u64);
-        let prod = ((self.reg[rs] as i32 as i64).wrapping_mul(self.reg[rm] as i32 as i64) as u64).wrapping_add(acc);
+        else {
+            (self.reg[rs] as u64).wrapping_mul(self.reg[rm] as u64).wrapping_add(acc)
+        };
         self.reg[rd_hi] = (prod >> 32) as u32;
         self.reg[rd_lo] = prod as u32;
 
