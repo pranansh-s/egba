@@ -1,4 +1,4 @@
-use std::{fs, path::PathBuf, time::Duration};
+use std::{fs, path::PathBuf, thread::sleep, time::Duration};
 
 use clap::{command, Arg};
 use egba_core::{bios::Bios, cartridge::Cartridge, gba::GBA, keypad::Keypad, rom::Rom};
@@ -9,9 +9,10 @@ const FRAME: Duration = Duration::from_nanos(1_000_000_000 / 60);
 
 fn run(ui: &mut EgbaUI, gba: &mut GBA, debug: bool) {
     let mut event_pump = ui.get_event_pump().expect("Failed to create SDL2 event pump");
+    let mut state = true;
     '_game: loop {
-        let mut db_next_frame = false;
-
+        let mut db_frame = false;
+        
         for event in event_pump.poll_iter() {
             match event {
                 Event::Quit { .. } => {
@@ -21,8 +22,12 @@ fn run(ui: &mut EgbaUI, gba: &mut GBA, debug: bool) {
                 Event::KeyUp { keycode: Some(keycode), .. } => {
                     match keycode {
                         Keycode::N => {
-                            db_next_frame = true;
+                            db_frame = true;
+                            state = false;
                         },
+                        Keycode::P => {
+                            state = true;
+                        }
                         Keycode::Escape => {
                             println!("Escape key pressed. Exiting.");
                             return;
@@ -36,7 +41,10 @@ fn run(ui: &mut EgbaUI, gba: &mut GBA, debug: bool) {
         
         //DEBUG-MODE
         if debug {
-            if db_next_frame {
+            if !db_frame {
+                sleep(Duration::from_millis(50));
+            }
+            if db_frame || state {
                 gba.show_stats();
                 gba.step();
             }
@@ -105,5 +113,5 @@ fn main() {
         std::process::exit(1);
     });
 
-    run(&mut egba_ui, &mut egba, true);
+    run(&mut egba_ui, &mut egba, false);
 }

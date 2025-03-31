@@ -10,7 +10,7 @@ pub fn thumb_decode(instr: u32) -> String {
     #[bitmatch]
     match bit_r!(instr, 0..16) {
         //2 
-        "0001_11??_????_????" => {
+        "0001_1???_????_????" => {
             let opcode = bit_check!(instr, 9, "SUB", "ADD");
             let rd = &format_reg!(instr, 0..3);
             let rs = &format_reg!(instr, 3..6);
@@ -77,9 +77,9 @@ pub fn thumb_decode(instr: u32) -> String {
                 3 => "BX",
                 _ => unreachable!()
             };
-            let rd = &format!("R{:02}", bit_r!(instr, 0..3) + (instr.bit(7) as usize) * 8);
+            let rd = if bit_r!(instr, 8..10) == 3 { "" } else { &format!("R{:02}, ", bit_r!(instr, 0..3) + (instr.bit(7) as usize) * 8) };
             let rs = &format!("R{:02}", bit_r!(instr, 3..6) + (instr.bit(6) as usize) * 8);
-            format!("{opcode} {rd}, {rs}")
+            format!("{opcode} {rd}{rs}")
         },
         //6
         "0100_1???_????_????" => {
@@ -96,7 +96,7 @@ pub fn thumb_decode(instr: u32) -> String {
             let ro = format_reg!(instr, 6..9);
             format!("{opcode}{b} {rd}, [{rb}, {ro}]")
         },
-        // 8
+        //8
         "0101_??1?_????_????" => {
             let opcode = match (instr.bit(10), instr.bit(11)) {
                 (false, false) => "STRH",
@@ -115,7 +115,8 @@ pub fn thumb_decode(instr: u32) -> String {
             let b = bit_check!(instr, 12, "B", "");
             let rd =  &format_reg!(instr, 0..3);
             let rb =  &format_reg!(instr, 3..6);
-            let imm = &format!("#{}", bit_r!(instr, 6..11) << 2);
+            let offset = if instr.bit(12) { bit_r!(instr, 6..11) } else { bit_r!(instr, 6..11) << 2 };
+            let imm = &format!("#{}", offset);
             format!("{opcode}{b} {rd}, [{rb}, {imm}]")
         },
         //10
@@ -160,6 +161,10 @@ pub fn thumb_decode(instr: u32) -> String {
             let rlist = (0..8).filter(|&i| bit_r!(instr, 0..8) & (1 << i) != 0).map(|i| format!("R{:02}", i)).collect::<Vec<_>>().join(", ");
             format!("{opcode} {rb}, {{{rlist}}}")
         },
+        //17
+        "1101_1111_????_????" => {
+            format!("SWI {}", bit_r!(instr, 0..8))
+        },
         //16
         "1101_????_????_????" => {
             let cond = match bit_r!(instr, 8..12) {
@@ -190,12 +195,13 @@ pub fn thumb_decode(instr: u32) -> String {
         //19
         "1111_????_????_????" => {
             let offset = bit_r!(instr, 0..11);
-            let label = bit_check!(instr, 11, (offset as i32) << 1, ((offset << 21) as i32) >> 9);
+            let label = if instr.bit(11) { 
+                &format!("{}", (offset as u32) << 1)
+            }
+            else {
+                &format!("{}", ((offset << 21) as i32) >> 9)
+            };
             format!("BL {label}")
-        },
-        //17
-        "1101_1111_????_????" => {
-            format!("SWI {}", bit_r!(instr, 0..8))
         },
         _ => "????".to_string()
     }

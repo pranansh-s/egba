@@ -28,17 +28,17 @@ impl Bus for Memory {
             0x0300_0000..=0x0300_7fff => self.iwram.read_byte(addr & 0x7fff),
             0x0400_0000..=0x0400_03fe => self.io.read_byte(addr & 0x3fe),
             // 0x0800_0000..=0x0fff_ffff => self.cartridge.read(addr & 0xfff_ffff),
-            _ => panic!("Unreachable memory read: {:08x}", addr)
+            _ => 69
         }
     }
 
     fn write_byte(&mut self, addr: u32, value: u8) {
         match addr {
-            0x0200_0000..=0x0203_ffff => self.ewram.write_byte(addr & 0x3_ffff, value),
-            0x0300_0000..=0x0300_7fff => self.iwram.write_byte(addr & 0x7fff, value),
+            0x0200_0000..=0x02ff_ffff => self.ewram.write_byte(addr & 0x3_ffff, value),
+            0x0300_0000..=0x03ff_ffff => self.iwram.write_byte(addr & 0x7fff, value),
             0x0400_0000..=0x0400_03fe => self.io.write_byte(addr & 0x3fe, value),
-            // 0x0800_0000..=0x0fff_ffff => self.cartridge.read(addr & 0xfff_ffff, value),
-            _ => panic!("Unreachable memory write: {:08x}", addr)
+            // 0x0800_0000..=0x0fff_ffff => self.cartridge.write_byte(addr & 0xfff_ffff, value),
+            a => { println!("Unreachable mem write: {:08x}", a) }
         }
     }
 }

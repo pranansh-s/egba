@@ -8,7 +8,7 @@ impl CPU {
     pub fn thumb_opcodes(&mut self, bus: &mut impl Bus, inst: u16) {
         #[bitmatch]
         match inst.bit_range(0..16) {
-            "0001_11??_????_????" => self.thumb_format2(inst.bit(10), inst.bit(9), bit_r!(inst, 6..9), bit_r!(inst, 3..6), bit_r!(inst, 0..3)),
+            "0001_1???_????_????" => self.thumb_format2(inst.bit(10), inst.bit(9), bit_r!(inst, 6..9), bit_r!(inst, 3..6), bit_r!(inst, 0..3)),
             "000?_????_????_????" => self.thumb_format1(bit_r!(inst, 11..13), bit_r!(inst, 6..11), bit_r!(inst, 3..6), bit_r!(inst, 0..3)),
             "001?_????_????_????" => self.thumb_format3(bit_r!(inst, 11..13), bit_r!(inst, 8..11), bit_r!(inst, 0..8) as u8),
 
@@ -28,10 +28,11 @@ impl CPU {
             "1011_?10?_????_????" => self.thumb_format14(bus, inst.bit(11), inst.bit(8), bit_r!(inst, 0..8) as u16),
             
             "1100_????_????_????" => self.thumb_format15(bus, inst.bit(11), bit_r!(inst, 8..11), bit_r!(inst, 0..8) as u8),
+            "1101_1111_????_????" => self.enter_exception(Exception::SoftwareInterrupt, self.thumb_pc().wrapping_add(2)),
             "1101_????_????_????" => self.thumb_format16(bus, bit_r!(inst, 8..12), bit_r!(inst, 0..8) as u8),
+
             "1110_0???_????_????" => self.thumb_format18(bus, bit_r!(inst, 0..11)),
             "1111_????_????_????" => self.thumb_format19(bus, inst.bit(11), bit_r!(inst, 0..11)),
-            "1101_1111_????_????" => self.enter_exception(Exception::SoftwareInterrupt, self.thumb_pc().wrapping_add(2)),
             _ => self.enter_exception(Exception::Undefined, self.thumb_pc().wrapping_add(2))
         }
     }
@@ -103,8 +104,8 @@ impl CPU {
     }
 
     fn thumb_format5(&mut self, bus: &mut impl Bus, op: usize, h1: bool, h2: bool, rs: usize, rd: usize) {
-        let rs = if h1 { rs + 8 } else { rs };
-        let rd = if h2 { rd + 8 } else { rd };
+        let rs = if h2 { rs + 8 } else { rs };
+        let rd = if h1 { rd + 8 } else { rd };
         
         match op {
             0 => self.reg[rd] = self.ADD(self.reg[rd], self.reg[rs], false),
@@ -132,12 +133,7 @@ impl CPU {
     }
 
     fn thumb_format7(&mut self, bus: &mut impl Bus, l: bool, b: bool, ro: usize, rb: usize, rd: usize) {
-        if l {
-            self.arm_LDR_STR(bus, true, false, true, true, b, false, rb, rd, self.reg[ro] as usize);
-        }
-        else {
-            self.arm_LDR_STR(bus, false, false, true, true, b, false, rb, rd, self.reg[ro] as usize);
-        }
+        self.arm_LDR_STR(bus, l, false, true, true, b, false, rb, rd, self.reg[ro] as usize);
     }
 
     fn thumb_format8(&mut self, bus: &mut impl Bus, h: bool, s: bool, ro: usize, rb: usize, rd: usize) {
@@ -145,13 +141,8 @@ impl CPU {
     }
 
     fn thumb_format9(&mut self, bus: &mut impl Bus, b: bool, l: bool, offset: usize, rb: usize, rd: usize) {
-        let offset = offset << 2;
-        if l {
-            self.arm_LDR_STR(bus, true, false, true, true, b, false, rb, rd, offset);
-        }
-        else {
-            self.arm_LDR_STR(bus, false, false, true, true, b, false, rb, rd, offset);
-        }
+        let offset = if b { offset } else { offset << 2 };
+        self.arm_LDR_STR(bus, l, false, true, true, b, false, rb, rd, offset);
     }
 
     fn thumb_format10(&mut self, bus: &mut impl Bus, l: bool, offset: usize, rb: usize, rd: usize) {
@@ -188,7 +179,7 @@ impl CPU {
         let other = if l { PC_INDEX } else { LR_INDEX };
         let r_list = if r { r_list | (1 << other) } else { r_list };
 
-        self.arm_LDM_STM(bus, l, false, true, false, true, SP_INDEX, r_list);
+        self.arm_LDM_STM(bus, l, !l, l, false, true, SP_INDEX, r_list);
     }
 
     fn thumb_format15(&mut self, bus: &mut impl Bus, l: bool, rb: usize, r_list: u8) {
@@ -213,27 +204,28 @@ impl CPU {
         if !self.condition_check(cond) {
             return;
         }
+        
         let offset = ((offset as i8) as i32) << 1;
-        self.reg[PC_INDEX] = self.reg[PC_INDEX].wrapping_add(offset as u32);
+        self.reg[PC_INDEX] = ((self.reg[PC_INDEX] as i32) + offset) as u32;
         self.flush_pipeline(bus);
     }
 
     fn thumb_format18(&mut self, bus: &mut impl Bus, offset: usize) {
         let offset = ((offset << 21) as i32) >> 20;
-        self.reg[PC_INDEX] = self.reg[PC_INDEX].wrapping_add(offset as u32);
+        self.reg[PC_INDEX] = ((self.reg[PC_INDEX] as i32) + offset) as u32;
         self.flush_pipeline(bus);
     }
 
     fn thumb_format19(&mut self, bus: &mut impl Bus, hi: bool, offset: usize) {
         if hi {
-            self.reg[PC_INDEX] = self.reg[LR_INDEX].wrapping_add((offset as u32) << 1);
+            let addr = self.reg[LR_INDEX].wrapping_add((offset as u32) << 1);
             self.reg[LR_INDEX] = self.thumb_pc().wrapping_add(2) | 1;
-
+            self.reg[PC_INDEX] = addr;
             self.flush_pipeline(bus);
         }
         else {
             let offset = ((offset << 21) as i32) >> 9;
-            self.reg[LR_INDEX] = self.reg[PC_INDEX].wrapping_add(offset as u32);
+            self.reg[LR_INDEX] = ((self.reg[PC_INDEX] as i32) + offset) as u32;
         }
     }
 }

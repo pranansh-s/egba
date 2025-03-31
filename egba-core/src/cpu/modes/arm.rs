@@ -3,6 +3,7 @@ use bitmatch::bitmatch;
 
 use crate::{bit_r, bus::Bus, cpu::{alu::is_test, cpu::{CPU, LR_INDEX, PC_INDEX}, exception::Exception, psr::{OperatingMode, OperatingState, ProgramStatusRegister}}};
 
+#[allow(non_camel_case_types)]
 impl CPU {
     #[bitmatch]
     pub fn arm_opcodes(&mut self, bus: &mut impl Bus, inst: u32) {
@@ -13,8 +14,7 @@ impl CPU {
         #[bitmatch]
         match inst.bit_range(0..28) {
             "0001_0010_1111_1111_1111_0001_????" => self.arm_BX(bus, bit_r!(inst, 0..4)),
-            "1010_????_????_????_????_????_????" => self.arm_B(bus, bit_r!(inst, 0..24)),
-            "1011_????_????_????_????_????_????" => self.arm_BL(bus, bit_r!(inst, 0..24)),
+            "101?_????_????_????_????_????_????" => self.arm_B_BL(bus, inst.bit(24), bit_r!(inst, 0..24)),
             "0000_00??_????_????_????_1001_????" => self.arm_MUL_MLA(inst.bit(21), inst.bit(20), bit_r!(inst, 16..20), bit_r!(inst, 12..16), bit_r!(inst, 8..12), bit_r!(inst, 0..4)),
             
             "0000_1???_????_????_????_1001_????" => self.arm_UMULL_UMLAL_SMULL_SMLAL(inst.bit(22), inst.bit(21), inst.bit(20), bit_r!(inst, 16..20), bit_r!(inst, 12..16), bit_r!(inst, 8..12), bit_r!(inst, 0..4)),
@@ -23,7 +23,7 @@ impl CPU {
             "00?1_0?10_100?_1111_????_????_????" => self.arm_MSR(inst.bit(25), inst.bit(22), !inst.bit(16), bit_r!(inst, 0..12)),
 
             "011?_????_????_????_????_???1_????" => self.enter_exception(Exception::Undefined, self.arm_pc().wrapping_add(4)),
-            "100?_???1_????_????_????_????_????" => self.arm_LDM_STM(bus, inst.bit(20), inst.bit(24), inst.bit(23), inst.bit(22), inst.bit(21), bit_r!(inst, 16..20), bit_r!(inst, 0..16) as u16),
+            "100?_????_????_????_????_????_????" => self.arm_LDM_STM(bus, inst.bit(20), inst.bit(24), inst.bit(23), inst.bit(22), inst.bit(21), bit_r!(inst, 16..20), bit_r!(inst, 0..16) as u16),
             
             "0001_0?00_????_????_0000_1001_????" => self.arm_SWP(bus, inst.bit(22), bit_r!(inst, 16..20), bit_r!(inst, 12..16), bit_r!(inst, 0..4)),
             "000?_????_????_????_????_1??1_????" => self.arm_LDRH_LDRSB_LDRSH_STRH(bus, inst.bit(24), inst.bit(23), inst.bit(22), inst.bit(21), inst.bit(20), bit_r!(inst, 16..20), bit_r!(inst, 12..16), bit_r!(inst, 8..12), inst.bit(6), inst.bit(5), bit_r!(inst, 0..4)),
@@ -46,15 +46,11 @@ impl CPU {
         self.flush_pipeline(bus);
     }
 
-    fn arm_B(&mut self, bus: &mut impl Bus, offset: usize) {
+    fn arm_B_BL(&mut self, bus: &mut impl Bus, l: bool, offset: usize) {
         let offset = ((offset << 8) as i32) >> 6;
-        self.reg[PC_INDEX] = ((self.reg[PC_INDEX] as i32) + offset) as u32;
-        self.flush_pipeline(bus);
-    }
-
-    fn arm_BL(&mut self, bus: &mut impl Bus, offset: usize) {
-        let offset = ((offset << 8) as i32) >> 6;
-        self.reg[LR_INDEX] = self.arm_pc().wrapping_add(4);
+        if l { 
+            self.reg[LR_INDEX] = self.arm_pc().wrapping_add(4);
+        }
         self.reg[PC_INDEX] = ((self.reg[PC_INDEX] as i32) + offset) as u32;
         self.flush_pipeline(bus);
     }
