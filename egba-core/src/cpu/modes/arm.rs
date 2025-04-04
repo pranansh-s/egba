@@ -72,7 +72,7 @@ impl CPU {
         else {
             self.reg[bit_r!(op, 0..4)]
         };
-        let mask = if f { 0xF000_0000 } else { 0xF000_00DF };
+        let mask = if f { 0xf000_0000 } else { 0xf000_00df };
 
         if p {
             self.spsr = (self.spsr & !mask) | (bits & mask);
@@ -126,7 +126,7 @@ impl CPU {
 
         if !is_test(opcode) {
             self.reg[rd] = res;
-            if s && rd == PC_INDEX && self.cpsr.mode != OperatingMode::usr  && self.cpsr.mode != OperatingMode::sys {
+            if s && rd == PC_INDEX && self.cpsr.mode != OperatingMode::usr && self.cpsr.mode != OperatingMode::sys {
                 self.restore_spsr();
             }
 
@@ -222,6 +222,7 @@ impl CPU {
         else {
             bus.write_hword(addr, self.reg[rd] as u16);
         }
+        
 
         if w || !p {
             self.reg[rn] = match u {

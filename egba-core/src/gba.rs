@@ -1,4 +1,6 @@
-use crate::{ bios::Bios, cartridge::Cartridge, cpu::cpu::CPU, memory::Memory };
+use std::{fs::OpenOptions, io::Write};
+
+use crate::{ bios::Bios, cartridge::Cartridge, cpu::cpu::{CPU, PC_INDEX}, memory::Memory };
 
 pub struct GBA {
     pub cpu: CPU,
@@ -19,6 +21,9 @@ impl GBA {
     }
 
     pub fn step(&mut self) {
+        // let mut file = OpenOptions::new().append(true).create(true).open("data.txt").unwrap();
+        // let pc_value = self.cpu.reg[PC_INDEX];
+        // writeln!(file, "{pc_value}").expect("Failed to write to file");
         self.cpu.step(&mut self.memory);
     }
 }

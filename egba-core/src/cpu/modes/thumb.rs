@@ -8,6 +8,7 @@ impl CPU {
     pub fn thumb_opcodes(&mut self, bus: &mut impl Bus, inst: u16) {
         #[bitmatch]
         match inst.bit_range(0..16) {
+            //1000_1000_0001_1010
             "0001_1???_????_????" => self.thumb_format2(inst.bit(10), inst.bit(9), bit_r!(inst, 6..9), bit_r!(inst, 3..6), bit_r!(inst, 0..3)),
             "000?_????_????_????" => self.thumb_format1(bit_r!(inst, 11..13), bit_r!(inst, 6..11), bit_r!(inst, 3..6), bit_r!(inst, 0..3)),
             "001?_????_????_????" => self.thumb_format3(bit_r!(inst, 11..13), bit_r!(inst, 8..11), bit_r!(inst, 0..8) as u8),
@@ -44,6 +45,8 @@ impl CPU {
             2 => self.ASR(self.reg[rs], offset as u8, true),
             _ => unreachable!()
         };
+
+        self.set_NZ(self.reg[rd]);
     }
 
     fn thumb_format2(&mut self, i: bool, sub: bool, offset: usize, rs: usize, rd: usize) {

@@ -7,9 +7,12 @@ use egba_ui::{window::EgbaUI, Event, Keycode};
 
 const FRAME: Duration = Duration::from_nanos(1_000_000_000 / 60);
 
+
 fn run(ui: &mut EgbaUI, gba: &mut GBA, debug: bool) {
     let mut event_pump = ui.get_event_pump().expect("Failed to create SDL2 event pump");
     let mut state = true;
+
+    let mut step_cnt = 0;
     '_game: loop {
         let mut db_frame = false;
         
@@ -42,11 +45,15 @@ fn run(ui: &mut EgbaUI, gba: &mut GBA, debug: bool) {
         //DEBUG-MODE
         if debug {
             if !db_frame {
-                sleep(Duration::from_millis(50));
+                // sleep(Duration::from_millis(100));
             }
             if db_frame || state {
                 gba.show_stats();
                 gba.step();
+
+                step_cnt += 1;
+
+                println!("{step_cnt}");
             }
         }
         //NORMAL
@@ -113,5 +120,5 @@ fn main() {
         std::process::exit(1);
     });
 
-    run(&mut egba_ui, &mut egba, false);
+    run(&mut egba_ui, &mut egba, true);
 }

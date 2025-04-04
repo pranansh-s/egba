@@ -1,5 +1,6 @@
 use bit::BitIndex;
 
+use crate::bit_r;
 
 pub trait Bus {
     fn read_byte(&self, addr: u32) -> u8;
@@ -11,8 +12,8 @@ pub trait Bus {
     }
     fn write_hword(&mut self, addr: u32, value: u16) {
         let addr = addr & !0b1;
-        self.write_byte(addr, value.bit_range(0..8).try_into().unwrap());
-        self.write_byte(addr.wrapping_add(1), value.bit_range(8..16).try_into().unwrap());
+        self.write_byte(addr, bit_r!(value, 0..8) as u8);
+        self.write_byte(addr.wrapping_add(1), bit_r!(value, 8..16) as u8);
     }
 
     fn read_word(&self, addr: u32) -> u32 {
@@ -22,8 +23,8 @@ pub trait Bus {
     
     fn write_word(&mut self, addr: u32, value: u32) {
         let addr = addr & !0b11;
-        self.write_hword(addr, value.bit_range(0..16).try_into().unwrap());
-        self.write_hword(addr.wrapping_add(2), value.bit_range(16..32).try_into().unwrap());
+        self.write_hword(addr, bit_r!(value, 0..16) as u16);
+        self.write_hword(addr.wrapping_add(2), bit_r!(value, 16..32) as u16);
     }
 }
 
