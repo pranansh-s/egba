@@ -9,21 +9,11 @@ pub const PC_INDEX: usize = 15;
 pub const LR_INDEX: usize = 14;
 pub const SP_INDEX: usize = 13;
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 pub struct BankedRegisters {
     pub sp: u32,
     pub lr: u32,
     pub spsr: u32
-}
-
-impl BankedRegisters {
-    pub fn new() -> Self {
-        Self {
-            sp: 0,
-            lr: 0,
-            spsr: 0,
-        }
-    }
 }
 
 pub struct CPU {
@@ -41,7 +31,7 @@ impl CPU {
         Self {
             reg: [0; 16],
             fiq_r8_12_banked: [0; 5],
-            banks: [BankedRegisters::new(); 6],
+            banks: [BankedRegisters::default(); 6],
             cpsr: ProgramStatusRegister::new(),
             spsr: 0,
             pipeline: [0, 0, 0]

@@ -4,7 +4,7 @@ pub mod sram;
 
 use self::{eeprom::Eeprom, flash::Flash, sram::Sram};
 
-pub enum Backup {
+pub enum BackupMedia {
     Eeprom(Eeprom),
     Flash(Flash),
     Sram(Sram),

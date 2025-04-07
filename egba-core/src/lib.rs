@@ -6,7 +6,7 @@ pub mod keypad;
 pub mod cpu;
 
 mod bus;
-mod interrupt;
+mod control;
 mod memory;
 
 mod constants;

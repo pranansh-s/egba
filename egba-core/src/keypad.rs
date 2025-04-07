@@ -1,6 +1,6 @@
 use bit::BitIndex;
 
-use crate::{bus::Bus, gba::GBA, KEYCNT, KEYINPUT};
+use crate::{bus::Bus, control::InterruptType, gba::GBA, KEYCNT, KEYINPUT};
 
 pub struct Keypad {
     pub a: bool,
@@ -64,7 +64,7 @@ impl GBA {
             };
 
             if interrupt {
-                //RAISE INTERRUPT
+                self.interrupt.interrupt_request(InterruptType::Keypad);
             }
         }
     }

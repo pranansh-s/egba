@@ -1,6 +1,4 @@
-use std::thread::sleep;
-
-use crate::{bios::Bios, bus::Bus, cartridge::Cartridge};
+use crate::{bios::Bios, bus::Bus, cartridge::Cartridge, HALTCNT};
 
 pub struct Memory {
     pub(crate) bios: Bios,
@@ -14,9 +12,12 @@ pub struct Memory {
     pub(crate) oam: Box<[u8]>,
 
     pub(crate) cartridge: Cartridge,
+
+    pub haltcnt_update: bool,
 }
 
 impl Memory {
+    #[must_use]
     pub fn new(bios: Bios, cartridge: Cartridge) -> Self {
         Self {
             bios,
@@ -30,6 +31,8 @@ impl Memory {
             oam: vec![0; 0x400].into_boxed_slice(),
 
             cartridge,
+
+            haltcnt_update: false,
         }
     }
 }
@@ -50,7 +53,7 @@ impl Bus for Memory {
             0x0800_0000..=0x0fff_ffff => self.cartridge.read(addr & 0xfff_ffff),
             _x => {
                 eprintln!("Unreachable mem read: {:08x}", _x);
-                69
+                0x69
             }
         }
     }
@@ -60,26 +63,19 @@ impl Bus for Memory {
             0x0200_0000..=0x02ff_ffff => self.ewram.write_byte(addr & 0x3_ffff, value),
             0x0300_0000..=0x03ff_ffff => self.iwram.write_byte(addr & 0x7fff, value),
 
-            0x0400_0000..=0x0400_03fe => self.io.write_byte(addr & 0x3ff, value),
+            0x0400_0000..=0x0400_03fe => {
+                if addr & 0x3ff == HALTCNT {
+                    self.haltcnt_update = true;
+                }
+
+                self.io.write_byte(addr & 0x3ff, value);
+            },
+
+            0x0500_0000..=0x0500_03ff => self.pram.write_byte(addr & 0x3ff, value),
+            0x0600_0000..=0x0601_7fff => self.vram.write_byte(addr & 0x1_ffff, value),
+            0x0700_0000..=0x0700_03ff => self.oam.write_byte(addr & 0x3ff, value),
 
             0x0800_0000..=0x0fff_ffff => self.cartridge.write(addr & 0xfff_ffff, value),
-            _x => { 
-                eprintln!("Unreachable mem write: {:08x}", _x);
-            }
-        }
-    }
-
-    fn write_hword(&mut self, addr: u32, value: u16) {
-        match addr {
-            0x0200_0000..=0x02ff_ffff => self.ewram.write_hword(addr & 0x3_ffff, value),
-            0x0300_0000..=0x03ff_ffff => self.iwram.write_hword(addr & 0x7fff, value),
-
-            0x0400_0000..=0x0400_03fe => self.io.write_hword(addr & 0x3ff, value),
-
-            0x0500_0000..=0x0500_03ff => self.pram.write_hword(addr & 0x3ff, value),
-            0x0600_0000..=0x0601_7fff => self.vram.write_hword(addr & 0x1_ffff, value),
-            0x0700_0000..=0x0700_03ff => self.oam.write_hword(addr & 0x3ff, value),
-
             _x => { 
                 eprintln!("Unreachable mem write: {:08x}", _x);
             }

@@ -37,6 +37,10 @@ impl Exception {
 
 impl CPU {
     pub fn enter_exception(&mut self, exception: Exception, next_address: u32) {
+        if (self.cpsr.fiq_disable_bit && exception == Exception::FIQ) || (self.cpsr.irq_disable_bit && exception == Exception::IRQ) {
+            return;
+        }
+        
         let exception_mode: OperatingMode = exception.get_mode();
         let exception_bank_index = exception_mode.current_bank_index();
 
