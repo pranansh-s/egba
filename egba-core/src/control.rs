@@ -86,6 +86,7 @@ pub struct SystemControl {
 impl Control for SystemControl {
     fn update(&mut self, mem: &mut Memory) {
         let waitcnt = mem.io.read_hword(WAITCNT);
+        
         self.sram_wait = waitcnt.bit_range(0..2) as usize;
         self.wait_state_0 = WaitState(waitcnt.bit_range(2..4) as usize, waitcnt.bit(4) as usize);
         self.wait_state_1 = WaitState(waitcnt.bit_range(5..7) as usize, waitcnt.bit(7) as usize);

@@ -23,6 +23,10 @@ impl Rom {
     pub fn len(&self) -> usize {
         self.0.len()
     }
+
+    pub fn data(&self) -> &Box<[u8]> {
+        &self.0
+    }
 }
 
 impl Bus for Rom {

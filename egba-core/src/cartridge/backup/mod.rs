@@ -10,7 +10,9 @@ pub enum BackupMedia {
     Sram(Sram),
 }
 
+#[derive(Clone)]
 pub enum BackupType {
+    NoBackup,
     Eeprom512B,
     Eeprom8KB,
     Flash64KB,

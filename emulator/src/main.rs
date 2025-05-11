@@ -96,20 +96,23 @@ fn run(ui: &mut EgbaUI, gba: &mut GBA, debug: bool) {
 fn main() {
     let args = command!()
         .arg(Arg::new("bios").help("Enter BIOS file path").short('b').long("bios").value_parser(clap::value_parser!(PathBuf)).required(true))
-        .arg(Arg::new("rom").help("Enter ROM file path").short('r').long("rom").value_parser(clap::value_parser!(PathBuf)).required(true)).get_matches();
+        .arg(Arg::new("rom").help("Enter ROM file path").short('r').long("rom").value_parser(clap::value_parser!(PathBuf)).required(true))
+        .arg(Arg::new("backup").help("Enter Backup file path").short('s').long("backup").value_parser(clap::value_parser!(PathBuf)).required(false)).get_matches();
 
-    let bios_path = args.get_one::<PathBuf>("bios").expect("Failed to read BIOS ROM");
+    let bios_path = args.get_one::<PathBuf>("bios").expect("Failed to read BIOS ROM path");
     let bios_buffer = fs::read(bios_path).unwrap();
     let bios_rom = Rom::new(&bios_buffer);
     let bios = Bios::new(bios_rom).unwrap_or_else(|err| {
         eprintln!("Error: {}", err);
         std::process::exit(1);
     });
-
-    let rom_path = args.get_one::<PathBuf>("rom").expect("Failed to read ROM");
+    
+    let rom_path = args.get_one::<PathBuf>("rom").expect("Failed to read Game ROM path");
     let rom_buffer = fs::read(rom_path).unwrap();
     let rom = Rom::new(&rom_buffer);
-    let cartridge = Cartridge::new(rom).unwrap_or_else(|err| {
+    
+    let backup_path = args.get_one::<PathBuf>("backup").unwrap_or(rom_path).set_extension("sav");
+    let cartridge = Cartridge::new(rom, backup_path).unwrap_or_else(|err| {
         eprintln!("Error: {}", err);
         std::process::exit(1);
     });
