@@ -111,7 +111,8 @@ fn main() {
     let rom_buffer = fs::read(rom_path).unwrap();
     let rom = Rom::new(&rom_buffer);
     
-    let backup_path = args.get_one::<PathBuf>("backup").unwrap_or(rom_path).set_extension("sav");
+    let backup_path = args.get_one::<PathBuf>("backup").unwrap_or(rom_path);
+    backup_path.to_owned().set_extension("sav");
     let cartridge = Cartridge::new(rom, backup_path).unwrap_or_else(|err| {
         eprintln!("Error: {}", err);
         std::process::exit(1);

@@ -26,6 +26,10 @@ impl GBA {
         }
     }
 
+    pub fn get_cpu(&self) -> &CPU {
+        &self.cpu
+    }
+
     pub fn step(&mut self) {
         // let mut file = OpenOptions::new().append(true).create(true).open("data.txt").unwrap();
         // let pc_value = self.cpu.reg[PC_INDEX];

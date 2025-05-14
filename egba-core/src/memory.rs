@@ -60,8 +60,8 @@ impl Bus for Memory {
 
     fn write_byte(&mut self, addr: u32, value: u8) {
         match addr {
-            0x0200_0000..=0x02ff_ffff => self.ewram.write_byte(addr & 0x3_ffff, value),
-            0x0300_0000..=0x03ff_ffff => self.iwram.write_byte(addr & 0x7fff, value),
+            0x0200_0000..=0x0203_ffff => self.ewram.write_byte(addr & 0x3_ffff, value),
+            0x0300_0000..=0x0300_7fff => self.iwram.write_byte(addr & 0x7fff, value),
 
             0x0400_0000..=0x0400_03fe => {
                 if addr & 0x3ff == HALTCNT {

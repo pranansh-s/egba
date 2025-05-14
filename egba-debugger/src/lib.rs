@@ -37,9 +37,9 @@ impl EGBADebugger for GBA {
                     Constraint::Percentage(34),
                 ])
                 .split(chunks[0]);
-
-            let registers: Vec<ListItem> = self
-                .cpu
+            
+            let cpu = self.get_cpu();
+            let registers: Vec<ListItem> = cpu
                 .reg
                 .iter()
                 .enumerate()
@@ -49,7 +49,7 @@ impl EGBADebugger for GBA {
             let reg_list = List::new(registers)
                 .block(Block::default().borders(Borders::ALL));
 
-            let cpsr = self.cpu.cpsr;
+            let cpsr = cpu.cpsr;
             let cpsr_text = format!(
                 "Mode: {:?} | State: {:?}\nFIQ: {} | IRQ: {}\nN: {} | Z: {} | C: {} | V: {}",
                 cpsr.mode, cpsr.operating_state, 
@@ -61,11 +61,11 @@ impl EGBADebugger for GBA {
                 .block(Block::default().title("Current Program Status Register").borders(Borders::ALL));
 
             let pc_value = match cpsr.operating_state {
-                OperatingState::ARM => self.cpu.arm_pc(),
-                OperatingState::THUMB => self.cpu.thumb_pc()
+                OperatingState::ARM => cpu.arm_pc(),
+                OperatingState::THUMB => cpu.thumb_pc()
             };
             
-            let instruction = self.cpu.pipeline[1];
+            let instruction = cpu.pipeline[1];
             let decoded_instruction = match cpsr.operating_state {
                 OperatingState::ARM => arm_decode(instruction),
                 OperatingState::THUMB => thumb_decode(instruction),
