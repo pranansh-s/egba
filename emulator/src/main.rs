@@ -7,7 +7,6 @@ use egba_ui::{window::EgbaUI, Event, Keycode};
 
 const FRAME: Duration = Duration::from_nanos(1_000_000_000 / 60);
 
-
 fn run(ui: &mut EgbaUI, gba: &mut GBA, debug: bool) {
     let mut event_pump = ui.get_event_pump().expect("Failed to create SDL2 event pump");
     let mut state = true;
