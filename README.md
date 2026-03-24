@@ -1,9 +1,5 @@
-## EGBA - GBA Emulator in rust
-EGBA is a modular Game Boy Advance emulator suite written in Rust, featuring:
-- Cycle-accurate ARM7TDMI CPU emulation
-- Hardware-perfect component simulation
-- Dual-interface operation (SDL2 GUI and TUI debugger)
-- Extensible library-based architecture
+## EGBA - GBA Emulator in Rust
+EGBA is a modular Game Boy Advance emulator suite written in Rust with a library based architecture
 
 ## Features
 **CPU**
@@ -24,6 +20,6 @@ EGBA is a modular Game Boy Advance emulator suite written in Rust, featuring:
 
 **Other**
   - Robust debugging with a UI from managed states
-  - Managing output of graphics/audio using sdl2
+  - Output of GUI and sound using sdl2
   
 ```CURRENTLY DEVELOPING```
