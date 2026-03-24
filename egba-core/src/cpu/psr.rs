@@ -3,7 +3,6 @@ use core::fmt;
 use bit::BitIndex;
 
 #[allow(non_camel_case_types)]
-
 #[derive(Default, Clone, Copy, PartialEq)]
 pub enum OperatingMode {
     usr = 0b10000,
@@ -13,7 +12,7 @@ pub enum OperatingMode {
     svc = 0b10011,
     abt = 0b10111,
     sys = 0b11111,
-    und = 0b11011
+    und = 0b11011,
 }
 
 impl fmt::Debug for OperatingMode {
@@ -63,7 +62,7 @@ impl From<u32> for OperatingMode {
 pub enum OperatingState {
     #[default]
     ARM = 0,
-    THUMB = 1
+    THUMB = 1,
 }
 
 #[derive(Clone, Copy)]
@@ -76,7 +75,7 @@ pub struct ProgramStatusRegister {
     pub v_condition_bit: bool,
     pub c_condition_bit: bool,
     pub z_condition_bit: bool,
-    pub n_condition_bit: bool
+    pub n_condition_bit: bool,
 }
 
 impl ProgramStatusRegister {

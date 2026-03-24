@@ -1,3 +1,1 @@
-struct Video {
-    
-}
+pub struct Video {}

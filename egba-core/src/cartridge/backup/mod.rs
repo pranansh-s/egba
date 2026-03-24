@@ -19,7 +19,7 @@ pub enum BackupType {
     Eeprom8KB,
     Flash64KB,
     Flash128KB,
-    Sram32KB
+    Sram32KB,
 }
 
 pub trait BackupBuffer {
@@ -27,6 +27,5 @@ pub trait BackupBuffer {
         vec![0; size * 1024].into_boxed_slice()
     }
 
-    fn load(&mut self, path: &PathBuf) {}
     fn save(&self, path: &PathBuf) {}
 }

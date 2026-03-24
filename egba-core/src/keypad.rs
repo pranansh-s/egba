@@ -1,71 +1,68 @@
 use bit::BitIndex;
 
-use crate::{bus::Bus, control::InterruptType, gba::GBA, KEYCNT, KEYINPUT};
+use crate::{bus::Bus, control::InterruptType, gba::GBA};
 
 pub struct Keypad {
-    pub a: bool,
-    pub b: bool,
-    pub l: bool,
-    pub r: bool,
-    pub up: bool,
-    pub down: bool,
-    pub left: bool,
-    pub right: bool,
-    pub select: bool,
-    pub start: bool,
+    keystate: u16,
+    keycnt: u16,
 }
 
 impl Default for Keypad {
     fn default() -> Self {
         Keypad {
-            a: true,
-            b: true,
-            l: true,
-            r: true,
-            up: true,
-            down: true,
-            left: true,
-            right: true,
-            select: true,
-            start: true,
+            keystate: 0x03FF,
+            keycnt: 0x0000,
         }
     }
 }
 
-impl Into<u16> for Keypad {
-    fn into(self) -> u16 {
-        (self.a as u16) |
-        ((self.b as u16) << 1) |
-        ((self.select as u16) << 2) |
-        ((self.start as u16) << 3) |
-        ((self.right as u16) << 4) |
-        ((self.left as u16) << 5) |
-        ((self.up as u16) << 6) |
-        ((self.down as u16) << 7) |
-        ((self.r as u16) << 8) |
-        ((self.l as u16) << 9)
+impl Keypad {
+    fn should_interrupt(&self) -> bool {
+        if !self.keycnt.bit(14) {
+            return false;
+        }
+
+        let pressed = !self.keystate.bit_range(0..10);
+        let selection = self.keycnt.bit_range(0..10);
+
+        if self.keycnt.bit(15) {
+            pressed > 0 && (pressed & selection) == selection
+        } else {
+            (pressed & selection) > 0
+        }
     }
 }
 
 impl GBA {
-    pub fn update_keypad(&mut self, keypad: u16) {
-        self.memory.io.write_hword(KEYINPUT, keypad);
+    pub fn update_keypad(&mut self, state: u16) {
+        self.memory.keypad.keystate = state;
 
-        let keycnt = self.memory.io.read_hword(KEYCNT);
-        if keycnt.bit(14) {
-            let pressed = !keypad.bit_range(0..10);
-            let selection = keycnt.bit_range(0..10);
-            
-            let interrupt = if keycnt.bit(15) {
-                pressed > 0 && pressed & selection == selection
-            }
-            else {
-                pressed & selection > 0
-            };
+        if self.memory.keypad.should_interrupt() {
+            self.memory.interrupt.request(InterruptType::Keypad);
+        }
+    }
+}
 
-            if interrupt {
-                self.interrupt.interrupt_request(InterruptType::Keypad);
+impl Bus for Keypad {
+    fn read_byte(&self, addr: u32) -> u8 {
+        match addr {
+            0x130 => self.keystate as u8,
+            0x131 => (self.keystate >> 8) as u8,
+            0x132 => self.keycnt as u8,
+            0x133 => (self.keycnt >> 8) as u8,
+            _ => 0x69,
+        }
+    }
+
+    fn write_byte(&mut self, addr: u32, value: u8) {
+        match addr {
+            0x132 => {
+                self.keycnt.set_bit_range(0..8, value as u16);
             }
+            0x133 => {
+                self.keycnt.set_bit_range(8..16, value as u16);
+            }
+            _ => {}
         }
     }
 }

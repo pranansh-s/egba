@@ -13,13 +13,6 @@ impl From<Vec<u8>> for SRAM {
 }
 
 impl BackupBuffer for SRAM {
-    fn load(&mut self, path: &PathBuf) {
-        match fs::read(path) {
-            Ok(buf) => self.0 = buf.into_boxed_slice(),
-            Err(_) => panic!("Failed to load save data from: {:?}", path.file_name()),
-        }
-    }
-    
     fn save(&self, path: &PathBuf) {
         if fs::write(path, self.0.clone()).is_err() {
             panic!("Failed to save data to: {:?}", path.file_name());
