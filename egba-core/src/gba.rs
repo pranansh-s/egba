@@ -29,6 +29,7 @@ impl GBA {
 
         if power == PowerMode::Active || power == PowerMode::Halt {
             //TODO: video audio timers, dma, etc
+            self.memory.video.step();
             self.memory.system.step();
         }
 

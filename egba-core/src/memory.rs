@@ -4,6 +4,7 @@ use crate::{
     cartridge::Cartridge,
     control::{InterruptControl, SystemControl},
     keypad::Keypad,
+    video::Video,
 };
 
 pub struct Memory {
@@ -15,12 +16,14 @@ pub struct Memory {
     pub(crate) system: SystemControl,
     pub(crate) keypad: Keypad,
 
+    pub(crate) video: Video,
+
     pub(crate) cartridge: Cartridge,
 }
 
 impl Memory {
     #[must_use]
-    pub fn new(bios: Bios, cartridge: Cartridge) -> Self {
+    pub(crate) fn new(bios: Bios, cartridge: Cartridge) -> Self {
         Self {
             bios,
             ewram: vec![0; 0x40000].into_boxed_slice(),
@@ -28,6 +31,7 @@ impl Memory {
             interrupt: InterruptControl::default(),
             system: SystemControl::default(),
             keypad: Keypad::default(),
+            video: Video::new(),
             cartridge,
         }
     }

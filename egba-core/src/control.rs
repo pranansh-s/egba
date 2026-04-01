@@ -6,14 +6,14 @@ use crate::{
 };
 
 #[derive(Default)]
-pub struct InterruptControl {
+pub(crate) struct InterruptControl {
     master: bool,
     enable: u16,
     request: u16,
 }
 
 #[derive(Clone, Copy)]
-pub enum InterruptType {
+pub(crate) enum InterruptType {
     VBlank = 0,
     HBlank = 1,
     VCounter = 2,
@@ -65,7 +65,7 @@ impl Bus for InterruptControl {
 }
 
 impl InterruptControl {
-    pub fn step(&mut self, cpu: &mut CPU, system: &mut SystemControl) {
+    pub(crate) fn step(&mut self, cpu: &mut CPU, system: &mut SystemControl) {
         if (self.enable & self.request) == 0 {
             return;
         }
@@ -80,13 +80,13 @@ impl InterruptControl {
         }
     }
 
-    pub fn request(&mut self, interrupt: InterruptType) {
+    pub(crate) fn request(&mut self, interrupt: InterruptType) {
         self.request |= 1 << interrupt as usize;
     }
 }
 
 #[derive(Default, PartialEq, Clone, Copy)]
-pub enum PowerMode {
+pub(crate) enum PowerMode {
     #[default]
     Active,
     Halt,
@@ -94,21 +94,21 @@ pub enum PowerMode {
 }
 
 #[derive(Default)]
-pub struct SystemControl {
+pub(crate) struct SystemControl {
     waintcnt: u16,
     power: PowerMode,
 }
 
 impl SystemControl {
-    pub fn step(&mut self) {
+    pub(crate) fn step(&mut self) {
         //TODO: actual cycle counting with ws and prefetch behavior
     }
 
-    pub fn update_power(&mut self, power: PowerMode) {
+    pub(crate) fn update_power(&mut self, power: PowerMode) {
         self.power = power;
     }
 
-    pub fn get_power_mode(&self) -> PowerMode {
+    pub(crate) fn get_power_mode(&self) -> PowerMode {
         self.power
     }
 }

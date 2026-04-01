@@ -2,7 +2,7 @@ use bit::BitIndex;
 
 use crate::{bus::Bus, control::InterruptType, gba::GBA};
 
-pub struct Keypad {
+pub(crate) struct Keypad {
     keystate: u16,
     keycnt: u16,
 }
