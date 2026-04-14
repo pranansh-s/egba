@@ -1,10 +1,15 @@
 use sdl2::{
-    keyboard::Keycode, pixels::Color, rect::Point, render::Canvas, video::Window, AudioSubsystem,
+    keyboard::Keycode,
+    pixels::{Color, PixelFormatEnum},
+    rect::Rect,
+    render::{Canvas, TextureAccess},
+    video::Window,
     EventPump, Sdl,
 };
 
-const WIDTH: usize = 240;
-const HEIGHT: usize = 160;
+const WIDTH: u32 = 240;
+const HEIGHT: u32 = 160;
+const SCALE: u32 = 3;
 
 use std::{error::Error, fmt};
 
@@ -62,7 +67,6 @@ impl Error for EgbaUIError {}
 pub struct EgbaUI {
     canvas: Canvas<Window>,
     context: Sdl,
-    audio: AudioSubsystem,
 }
 
 impl EgbaUI {
@@ -71,24 +75,18 @@ impl EgbaUI {
         let video = context
             .video()
             .map_err(|e| EgbaUIError::VideoInitError(e.to_string()))?;
-        let audio = context
-            .audio()
-            .map_err(|e| EgbaUIError::AudioInitError(e.to_string()))?;
 
         let window = video
-            .window("EGBA", WIDTH as u32, HEIGHT as u32)
+            .window("EGBA", WIDTH * SCALE, HEIGHT * SCALE)
             .opengl()
             .position_centered()
-            .allow_highdpi()
             .build()
             .map_err(|e| EgbaUIError::WindowCreationError(e.to_string()))?;
         let mut canvas = window
             .into_canvas()
             .accelerated()
-            .present_vsync()
             .build()
             .map_err(|e| EgbaUIError::CanvasCreationError(e.to_string()))?;
-        let context = sdl2::init().map_err(|e| EgbaUIError::ContextInitError(e))?;
 
         canvas.set_draw_color(Color::RGB(0, 0, 0));
         canvas.clear();
@@ -97,7 +95,6 @@ impl EgbaUI {
         Ok(Self {
             canvas,
             context,
-            audio,
         })
     }
 
@@ -105,13 +102,39 @@ impl EgbaUI {
         self.context.event_pump()
     }
 
-    pub fn draw_pixel(&mut self, x: u32, y: u32, color: Color) {
-        let point = Point::new(x as i32, y as i32);
+    pub fn render_frame(&mut self, framebuffer: &[u32]) {
+        let texture_creator = self.canvas.texture_creator();
+        let mut texture = texture_creator
+            .create_texture(
+                PixelFormatEnum::RGB888,
+                TextureAccess::Streaming,
+                WIDTH,
+                HEIGHT,
+            )
+            .expect("Failed to create texture");
 
-        self.canvas.set_draw_color(color);
+        let pixel_data: Vec<u8> = framebuffer
+            .iter()
+            .flat_map(|&pixel| {
+                let r = ((pixel >> 16) & 0xFF) as u8;
+                let g = ((pixel >> 8) & 0xFF) as u8;
+                let b = (pixel & 0xFF) as u8;
+                [0u8, r, g, b]
+            })
+            .collect();
+
+        texture
+            .update(None, &pixel_data, (WIDTH * 4) as usize)
+            .expect("Failed to update texture");
+
+        self.canvas.clear();
         self.canvas
-            .draw_point(point)
-            .expect(&format!("Failed to draw pixel at ({}, {})", x, y));
+            .copy(
+                &texture,
+                None,
+                Some(Rect::new(0, 0, WIDTH * SCALE, HEIGHT * SCALE)),
+            )
+            .expect("Failed to copy texture to canvas");
         self.canvas.present();
     }
 

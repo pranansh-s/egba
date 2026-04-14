@@ -1,7 +1,16 @@
 use bit::BitIndex;
 use bitmatch::bitmatch;
 
-use crate::{bit_r, bus::Bus, cpu::{alu::is_test, cpu::{CPU, LR_INDEX, PC_INDEX}, exception::Exception, psr::{OperatingMode, OperatingState, ProgramStatusRegister}}};
+use crate::{
+    bit_r,
+    bus::Bus,
+    cpu::{
+        alu::is_test,
+        cpu::{CPU, LR_INDEX, PC_INDEX},
+        exception::Exception,
+        psr::{OperatingMode, OperatingState, ProgramStatusRegister},
+    },
+};
 
 #[allow(non_camel_case_types)]
 impl CPU {
@@ -14,25 +23,100 @@ impl CPU {
         #[bitmatch]
         match inst.bit_range(0..28) {
             "0001_0010_1111_1111_1111_0001_????" => self.arm_BX(bus, bit_r!(inst, 0..4)),
-            "101?_????_????_????_????_????_????" => self.arm_B_BL(bus, inst.bit(24), bit_r!(inst, 0..24)),
-            "0000_00??_????_????_????_1001_????" => self.arm_MUL_MLA(inst.bit(21), inst.bit(20), bit_r!(inst, 16..20), bit_r!(inst, 12..16), bit_r!(inst, 8..12), bit_r!(inst, 0..4)),
-            
-            "0000_1???_????_????_????_1001_????" => self.arm_UMULL_UMLAL_SMULL_SMLAL(inst.bit(22), inst.bit(21), inst.bit(20), bit_r!(inst, 16..20), bit_r!(inst, 12..16), bit_r!(inst, 8..12), bit_r!(inst, 0..4)),
-            
-            "0001_0?00_1111_????_0000_0000_0000" => self.arm_MRS(inst.bit(22), bit_r!(inst, 12..16)),
-            "00?1_0?10_100?_1111_????_????_????" => self.arm_MSR(inst.bit(25), inst.bit(22), !inst.bit(16), bit_r!(inst, 0..12)),
+            "101?_????_????_????_????_????_????" => {
+                self.arm_B_BL(bus, inst.bit(24), bit_r!(inst, 0..24))
+            }
+            "0000_00??_????_????_????_1001_????" => self.arm_MUL_MLA(
+                inst.bit(21),
+                inst.bit(20),
+                bit_r!(inst, 16..20),
+                bit_r!(inst, 12..16),
+                bit_r!(inst, 8..12),
+                bit_r!(inst, 0..4),
+            ),
 
-            "011?_????_????_????_????_???1_????" => self.enter_exception(Exception::Undefined, self.arm_pc().wrapping_add(4)),
-            "100?_????_????_????_????_????_????" => self.arm_LDM_STM(bus, inst.bit(20), inst.bit(24), inst.bit(23), inst.bit(22), inst.bit(21), bit_r!(inst, 16..20), bit_r!(inst, 0..16) as u16),
-            
-            "0001_0?00_????_????_0000_1001_????" => self.arm_SWP(bus, inst.bit(22), bit_r!(inst, 16..20), bit_r!(inst, 12..16), bit_r!(inst, 0..4)),
-            "000?_????_????_????_????_1??1_????" => self.arm_LDRH_LDRSB_LDRSH_STRH(bus, inst.bit(24), inst.bit(23), inst.bit(22), inst.bit(21), inst.bit(20), bit_r!(inst, 16..20), bit_r!(inst, 12..16), bit_r!(inst, 8..12), inst.bit(6), inst.bit(5), bit_r!(inst, 0..4)),
-            
-            "00??_????_????_????_????_????_????" => self.arm_data_proc(bus, inst.bit(25), bit_r!(inst, 21..25), inst.bit(20), bit_r!(inst, 16..20), bit_r!(inst, 12..16), bit_r!(inst, 0..12)),
-            "01??_????_????_????_????_????_????" => self.arm_LDR_STR(bus, inst.bit(20), inst.bit(25), inst.bit(24), inst.bit(23), inst.bit(22), inst.bit(21), bit_r!(inst, 16..20), bit_r!(inst, 12..16), bit_r!(inst, 0..12)),
+            "0000_1???_????_????_????_1001_????" => self.arm_UMULL_UMLAL_SMULL_SMLAL(
+                inst.bit(22),
+                inst.bit(21),
+                inst.bit(20),
+                bit_r!(inst, 16..20),
+                bit_r!(inst, 12..16),
+                bit_r!(inst, 8..12),
+                bit_r!(inst, 0..4),
+            ),
 
-            "1111_????_????_????_????_????_????" => self.enter_exception(Exception::SoftwareInterrupt, self.arm_pc().wrapping_add(4)),
-            _ => self.enter_exception(Exception::Undefined, self.arm_pc().wrapping_add(4))
+            "0001_0?00_1111_????_0000_0000_0000" => {
+                self.arm_MRS(inst.bit(22), bit_r!(inst, 12..16))
+            }
+            "00?1_0?10_100?_1111_????_????_????" => self.arm_MSR(
+                inst.bit(25),
+                inst.bit(22),
+                !inst.bit(16),
+                bit_r!(inst, 0..12),
+            ),
+
+            "011?_????_????_????_????_???1_????" => {
+                self.enter_exception(Exception::Undefined, self.arm_pc().wrapping_add(4))
+            }
+            "100?_????_????_????_????_????_????" => self.arm_LDM_STM(
+                bus,
+                inst.bit(20),
+                inst.bit(24),
+                inst.bit(23),
+                inst.bit(22),
+                inst.bit(21),
+                bit_r!(inst, 16..20),
+                bit_r!(inst, 0..16) as u16,
+            ),
+
+            "0001_0?00_????_????_0000_1001_????" => self.arm_SWP(
+                bus,
+                inst.bit(22),
+                bit_r!(inst, 16..20),
+                bit_r!(inst, 12..16),
+                bit_r!(inst, 0..4),
+            ),
+            "000?_????_????_????_????_1??1_????" => self.arm_LDRH_LDRSB_LDRSH_STRH(
+                bus,
+                inst.bit(24),
+                inst.bit(23),
+                inst.bit(22),
+                inst.bit(21),
+                inst.bit(20),
+                bit_r!(inst, 16..20),
+                bit_r!(inst, 12..16),
+                bit_r!(inst, 8..12),
+                inst.bit(6),
+                inst.bit(5),
+                bit_r!(inst, 0..4),
+            ),
+
+            "00??_????_????_????_????_????_????" => self.arm_data_proc(
+                bus,
+                inst.bit(25),
+                bit_r!(inst, 21..25),
+                inst.bit(20),
+                bit_r!(inst, 16..20),
+                bit_r!(inst, 12..16),
+                bit_r!(inst, 0..12),
+            ),
+            "01??_????_????_????_????_????_????" => self.arm_LDR_STR(
+                bus,
+                inst.bit(20),
+                inst.bit(25),
+                inst.bit(24),
+                inst.bit(23),
+                inst.bit(22),
+                inst.bit(21),
+                bit_r!(inst, 16..20),
+                bit_r!(inst, 12..16),
+                bit_r!(inst, 0..12),
+            ),
+
+            "1111_????_????_????_????_????_????" => {
+                self.enter_exception(Exception::SoftwareInterrupt, self.arm_pc().wrapping_add(4))
+            }
+            _ => self.enter_exception(Exception::Undefined, self.arm_pc().wrapping_add(4)),
         }
     }
 
@@ -48,7 +132,7 @@ impl CPU {
 
     fn arm_B_BL(&mut self, bus: &mut impl Bus, l: bool, offset: usize) {
         let offset = ((offset << 8) as i32) >> 6;
-        if l { 
+        if l {
             self.reg[LR_INDEX] = self.arm_pc().wrapping_add(4);
         }
         self.reg[PC_INDEX] = ((self.reg[PC_INDEX] as i32) + offset) as u32;
@@ -56,43 +140,44 @@ impl CPU {
     }
 
     fn arm_MRS(&mut self, p: bool, rd: usize) {
-        let psr = if p {
-            self.spsr
-        }
-        else {
-            self.cpsr.into()
-        };
+        let psr = if p { self.spsr } else { self.cpsr.into() };
         self.reg[rd] = psr;
     }
 
     fn arm_MSR(&mut self, i: bool, p: bool, f: bool, op: usize) {
         let bits = if i {
             self.ROR(bit_r!(op, 0..8) as u32, 2 * bit_r!(op, 8..12) as u8, false)
-        }
-        else {
+        } else {
             self.reg[bit_r!(op, 0..4)]
         };
         let mask = if f { 0xf000_0000 } else { 0xf000_00df };
 
         if p {
             self.spsr = (self.spsr & !mask) | (bits & mask);
-        }
-        else {
+        } else {
             let cpsr = ProgramStatusRegister::from((u32::from(self.cpsr) & !mask) | (bits & mask));
             self.set_mode(cpsr.mode);
             self.cpsr = cpsr;
         }
     }
 
-    fn arm_data_proc(&mut self, bus: &mut impl Bus, i: bool, opcode: usize, s: bool, rn: usize, rd: usize, operand2: usize) {
+    fn arm_data_proc(
+        &mut self,
+        bus: &mut impl Bus,
+        i: bool,
+        opcode: usize,
+        s: bool,
+        rn: usize,
+        rd: usize,
+        operand2: usize,
+    ) {
         let mut op = self.reg[rn];
         let update_cpsr = s && rd != PC_INDEX;
         let op2 = if i {
             let imm = bit_r!(operand2, 0..8) as u32;
             let rotate = 2 * bit_r!(operand2, 8..12) as u8;
             self.ROR(imm, rotate, update_cpsr)
-        }
-        else {
+        } else {
             self.shift_by_reg(operand2, update_cpsr)
         };
 
@@ -109,7 +194,7 @@ impl CPU {
             0b0101 => self.ADC(op, op2, update_cpsr, self.cpsr.c_condition_bit),
             0b0110 => self.SBC(op, op2, update_cpsr, self.cpsr.c_condition_bit),
             0b0111 => self.SBC(op2, op, update_cpsr, self.cpsr.c_condition_bit),
-            0b1000 => self.AND(op, op2), 
+            0b1000 => self.AND(op, op2),
             0b1001 => self.EOR(op, op2),
             0b1010 => self.SUB(op, op2, true),
             0b1011 => self.ADD(op, op2, true),
@@ -117,7 +202,7 @@ impl CPU {
             0b1101 => self.MOV(op2),
             0b1110 => self.BIC(op, op2),
             0b1111 => self.MVN(op2),
-            _ => unreachable!()
+            _ => unreachable!(),
         };
 
         if update_cpsr || is_test(opcode) {
@@ -126,7 +211,10 @@ impl CPU {
 
         if !is_test(opcode) {
             self.reg[rd] = res;
-            if s && rd == PC_INDEX && self.cpsr.mode != OperatingMode::usr && self.cpsr.mode != OperatingMode::sys {
+            if s && rd == PC_INDEX
+                && self.cpsr.mode != OperatingMode::usr
+                && self.cpsr.mode != OperatingMode::sys
+            {
                 self.restore_spsr();
             }
 
@@ -136,11 +224,22 @@ impl CPU {
         }
     }
 
-    pub(crate) fn arm_LDR_STR(&mut self, bus: &mut impl Bus, l: bool, i: bool, p: bool, u: bool, b: bool, w: bool, rn: usize, rd: usize, offset: usize) {
+    pub(crate) fn arm_LDR_STR(
+        &mut self,
+        bus: &mut impl Bus,
+        l: bool,
+        i: bool,
+        p: bool,
+        u: bool,
+        b: bool,
+        w: bool,
+        rn: usize,
+        rd: usize,
+        offset: usize,
+    ) {
         let shift = if i {
             self.shift_by_reg(offset, false)
-        }
-        else {
+        } else {
             offset as u32
         };
 
@@ -158,22 +257,23 @@ impl CPU {
         if l {
             self.reg[rd] = if b {
                 bus.read_byte(addr) as u32
-            }
-            else {
+            } else {
                 bus.read_word(addr)
             };
 
             if rd == PC_INDEX {
                 self.flush_pipeline(bus);
             }
-        }
-        else {
-            let val = if rd == PC_INDEX {  self.reg[PC_INDEX].wrapping_add(12) } else { self.reg[rd] };
-            
+        } else {
+            let val = if rd == PC_INDEX {
+                self.reg[PC_INDEX].wrapping_add(12)
+            } else {
+                self.reg[rd]
+            };
+
             if b {
                 bus.write_byte(addr, bit_r!(val, 0..8) as u8);
-            }
-            else {
+            } else {
                 bus.write_word(addr, val);
             }
         }
@@ -190,15 +290,28 @@ impl CPU {
         }
     }
 
-    pub(crate) fn arm_LDRH_LDRSB_LDRSH_STRH(&mut self, bus: &mut impl Bus, p: bool, u: bool, i: bool, w: bool, l: bool, rn: usize, rd: usize, offset_hi: usize, s: bool, h: bool, offset_lo: usize) {
+    pub(crate) fn arm_LDRH_LDRSB_LDRSH_STRH(
+        &mut self,
+        bus: &mut impl Bus,
+        p: bool,
+        u: bool,
+        i: bool,
+        w: bool,
+        l: bool,
+        rn: usize,
+        rd: usize,
+        offset_hi: usize,
+        s: bool,
+        h: bool,
+        offset_lo: usize,
+    ) {
         let shift = if i {
             ((offset_hi << 4) | offset_lo) as u32
-        }
-        else {
+        } else {
             self.reg[offset_lo]
         };
 
-        let addr = match(p, u) {
+        let addr = match (p, u) {
             (false, true) | (false, false) => self.reg[rn],
             (true, true) => self.reg[rn].wrapping_add(shift),
             (true, false) => self.reg[rn].wrapping_sub(shift),
@@ -214,15 +327,12 @@ impl CPU {
                     val.rotate_right(8 * (addr & 0b1))
                 };
                 val
-            }
-            else {
+            } else {
                 bus.read_byte(addr) as i8 as u32
             };
-        }
-        else {
+        } else {
             bus.write_hword(addr, self.reg[rd] as u16);
         }
-        
 
         if w || !p {
             self.reg[rn] = match u {
@@ -232,7 +342,17 @@ impl CPU {
         }
     }
 
-    pub(crate) fn arm_LDM_STM(&mut self, bus: &mut impl Bus, l: bool, p: bool, u: bool, s: bool, w: bool, rn: usize, r_list: u16) {
+    pub(crate) fn arm_LDM_STM(
+        &mut self,
+        bus: &mut impl Bus,
+        l: bool,
+        p: bool,
+        u: bool,
+        s: bool,
+        w: bool,
+        rn: usize,
+        r_list: u16,
+    ) {
         let regs_length = r_list.count_ones();
         let base_address = match (p, u) {
             (false, true) => self.reg[rn],
@@ -240,7 +360,7 @@ impl CPU {
             (false, false) => self.reg[rn].wrapping_sub(4 * (regs_length - 1)),
             (true, false) => self.reg[rn].wrapping_sub(4 * regs_length),
         };
-        
+
         let pre_mode = self.cpsr.mode;
         if s && !r_list.bit(PC_INDEX) {
             self.set_mode(OperatingMode::usr);
@@ -251,13 +371,21 @@ impl CPU {
             if r_list.bit(r) {
                 if l {
                     self.reg[r] = bus.read_word(addr);
-                }
-                else {
-                    let val = if r == PC_INDEX {  self.reg[PC_INDEX].wrapping_add(12) } else { self.reg[r] };
+                } else {
+                    let val = if r == PC_INDEX {
+                        self.reg[PC_INDEX].wrapping_add(12)
+                    } else {
+                        self.reg[r]
+                    };
                     bus.write_word(addr, val);
                 }
 
-                if r == PC_INDEX && s && l && self.cpsr.mode != OperatingMode::usr && self.cpsr.mode != OperatingMode::sys {
+                if r == PC_INDEX
+                    && s
+                    && l
+                    && self.cpsr.mode != OperatingMode::usr
+                    && self.cpsr.mode != OperatingMode::sys
+                {
                     self.restore_spsr();
                 }
 
@@ -274,9 +402,9 @@ impl CPU {
                 (false, true) => addr,
                 (true, true) => addr.wrapping_sub(4),
                 (false, false) => addr.wrapping_sub(4 * (regs_length + 1)),
-                (true, false) => addr.wrapping_sub(4 * regs_length)
+                (true, false) => addr.wrapping_sub(4 * regs_length),
             };
-        } 
+        }
 
         if l && r_list.bit(PC_INDEX) {
             self.flush_pipeline(bus);
@@ -287,19 +415,34 @@ impl CPU {
         let acc = if a { self.reg[rn] } else { 0 };
         let prod = self.reg[rm].wrapping_mul(self.reg[rs]).wrapping_add(acc);
         self.reg[rd] = prod;
-        
+
         if s {
             self.set_NZ(prod);
         }
     }
 
-    fn arm_UMULL_UMLAL_SMULL_SMLAL(&mut self, u: bool, a: bool, s: bool, rd_hi: usize, rd_lo: usize, rs: usize, rm: usize) {
-        let acc = if a { (self.reg[rd_hi] as u64) << 32 | (self.reg[rd_lo] as u64) } else { 0 };
+    fn arm_UMULL_UMLAL_SMULL_SMLAL(
+        &mut self,
+        u: bool,
+        a: bool,
+        s: bool,
+        rd_hi: usize,
+        rd_lo: usize,
+        rs: usize,
+        rm: usize,
+    ) {
+        let acc = if a {
+            (self.reg[rd_hi] as u64) << 32 | (self.reg[rd_lo] as u64)
+        } else {
+            0
+        };
         let prod = if u {
-            ((self.reg[rs] as i32 as i64).wrapping_mul(self.reg[rm] as i32 as i64) as u64).wrapping_add(acc)
-        }
-        else {
-            (self.reg[rs] as u64).wrapping_mul(self.reg[rm] as u64).wrapping_add(acc)
+            ((self.reg[rs] as i32 as i64).wrapping_mul(self.reg[rm] as i32 as i64) as u64)
+                .wrapping_add(acc)
+        } else {
+            (self.reg[rs] as u64)
+                .wrapping_mul(self.reg[rm] as u64)
+                .wrapping_add(acc)
         };
         self.reg[rd_hi] = (prod >> 32) as u32;
         self.reg[rd_lo] = prod as u32;
@@ -314,9 +457,10 @@ impl CPU {
         if b {
             self.reg[rd] = bus.read_byte(swap_address) as u32;
             bus.write_byte(swap_address, self.reg[rm] as u8);
-        }
-        else {
-            self.reg[rd] = bus.read_word(swap_address).rotate_right(8 * (swap_address & 0b11));
+        } else {
+            self.reg[rd] = bus
+                .read_word(swap_address)
+                .rotate_right(8 * (swap_address & 0b11));
             bus.write_word(swap_address, self.reg[rm]);
         }
     }

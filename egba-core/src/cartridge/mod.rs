@@ -70,7 +70,12 @@ impl Bus for Cartridge {
                         _ => 0,
                     }
                 } else {
-                    self.rom.data()[(addr & 0x01ff_ffff) as usize]
+                    let rom_addr = (addr & 0x01FF_FFFF) as usize;
+                    if rom_addr < self.rom.len() {
+                        self.rom.data()[rom_addr]
+                    } else {
+                        ((addr >> 1) as u8)
+                    }
                 }
             }
             0x0e00_0000..=0x0e00_ffff => match &self.backup {
@@ -78,7 +83,7 @@ impl Bus for Cartridge {
                 Some(BackupMedia::Flash(media)) => media.read_byte(addr & 0xffff),
                 _ => 0xFF,
             },
-            _ => panic!("Unreachable cartridge memory read: {addr:08X}"),
+            _ => 0xFF,
         }
     }
 
@@ -97,7 +102,7 @@ impl Bus for Cartridge {
                 Some(BackupMedia::Flash(media)) => media.write_byte(addr & 0xffff, value),
                 _ => {}
             },
-            _ => panic!("Unreachable cartridge memory write: {addr:08X}"),
+            _ => {}
         }
     }
 }

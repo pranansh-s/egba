@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 #[derive(Clone, Copy, Default)]
 pub enum ScreenSize {
     #[default]

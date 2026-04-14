@@ -1,4 +1,8 @@
-use std::{fs, path::PathBuf, thread::sleep, time::Duration};
+use std::{
+    fs,
+    path::PathBuf,
+    time::{Duration, Instant},
+};
 
 use clap::{command, Arg};
 use egba_core::{bios::Bios, cartridge::Cartridge, gba::GBA, rom::Rom};
@@ -8,17 +12,15 @@ use egba_ui::{
     Event, Keycode,
 };
 
-const FRAME: Duration = Duration::from_nanos(1_000_000_000 / 60);
+const FRAME_DURATION: Duration = Duration::from_nanos(1_000_000_000 / 60);
 
 fn run(ui: &mut EgbaUI, gba: &mut GBA, debug: bool) {
     let mut event_pump = ui
         .get_event_pump()
         .expect("Failed to create SDL2 event pump");
-    let mut state = true;
 
-    let mut step_cnt = 0;
     '_game: loop {
-        let mut db_frame = false;
+        let frame_start = Instant::now();
 
         for event in event_pump.poll_iter() {
             match event {
@@ -30,13 +32,6 @@ fn run(ui: &mut EgbaUI, gba: &mut GBA, debug: bool) {
                     keycode: Some(keycode),
                     ..
                 } => match keycode {
-                    Keycode::N => {
-                        db_frame = true;
-                        state = false;
-                    }
-                    Keycode::P => {
-                        state = true;
-                    }
                     Keycode::Escape => {
                         println!("Escape key pressed. Exiting.");
                         return;
@@ -47,35 +42,20 @@ fn run(ui: &mut EgbaUI, gba: &mut GBA, debug: bool) {
             }
         }
 
-        //DEBUG-MODE
-        if debug {
-            if !db_frame {
-                sleep(Duration::from_millis(100));
-            }
-            if db_frame || state {
-                gba.show_stats();
-                gba.step();
-
-                step_cnt += 1;
-
-                println!("{step_cnt}");
-            }
-        }
-        //NORMAL
-        else {
-            gba.step();
-        }
-
-        //KEYPAD
         let keystate = get_keystate(&event_pump);
         gba.update_keypad(keystate);
 
-        //UPDATE SDL VIDEO
-        ui.clear();
+        if debug {
+            gba.show_stats();
+        }
+        gba.run_frame();
 
-        //PLAY AUDIO WAVE
+        ui.render_frame(gba.framebuffer());
 
-        //(REACT HARDWARE) ACCORDING TO DMA, TIMERS, etc...
+        let elapsed = frame_start.elapsed();
+        if elapsed < FRAME_DURATION {
+            std::thread::sleep(FRAME_DURATION - elapsed);
+        }
     }
 }
 
@@ -105,6 +85,13 @@ fn main() {
                 .value_parser(clap::value_parser!(PathBuf))
                 .required(false),
         )
+        .arg(
+            Arg::new("debug")
+                .help("Enable debug mode")
+                .short('d')
+                .long("debug")
+                .action(clap::ArgAction::SetTrue),
+        )
         .get_matches();
 
     let bios_path = args
@@ -124,17 +111,19 @@ fn main() {
     let rom = Rom::new(&rom_buffer);
 
     let backup_path = args.get_one::<PathBuf>("backup").unwrap_or(rom_path);
-    backup_path.to_owned().set_extension("sav");
-    let cartridge = Cartridge::new(rom, backup_path).unwrap_or_else(|err| {
+    let mut sav_path = backup_path.to_owned();
+    sav_path.set_extension("sav");
+    let cartridge = Cartridge::new(rom, &sav_path).unwrap_or_else(|err| {
         eprintln!("Error: {}", err);
         std::process::exit(1);
     });
 
+    let debug = args.get_flag("debug");
     let mut egba = GBA::new(bios, cartridge);
     let mut egba_ui = EgbaUI::new().unwrap_or_else(|err| {
         eprintln!("Error: {}", err);
         std::process::exit(1);
     });
 
-    run(&mut egba_ui, &mut egba, true);
+    run(&mut egba_ui, &mut egba, debug);
 }

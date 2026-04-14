@@ -1,4 +1,7 @@
-use super::{cpu::{CPU, PC_INDEX}, psr::{OperatingMode, OperatingState}};
+use super::{
+    cpu::{CPU, PC_INDEX},
+    psr::{OperatingMode, OperatingState},
+};
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum Exception {
@@ -8,7 +11,7 @@ pub enum Exception {
     IRQ,
     PrefetchAbort,
     Undefined,
-    SoftwareInterrupt
+    SoftwareInterrupt,
 }
 
 impl Exception {
@@ -29,7 +32,7 @@ impl Exception {
             Exception::Reset | Exception::SoftwareInterrupt => OperatingMode::svc,
             Exception::DataAbort | Exception::PrefetchAbort => OperatingMode::abt,
             Exception::FIQ => OperatingMode::fiq,
-            Exception::IRQ => OperatingMode::irq,            
+            Exception::IRQ => OperatingMode::irq,
             Exception::Undefined => OperatingMode::und,
         }
     }
@@ -37,10 +40,12 @@ impl Exception {
 
 impl CPU {
     pub fn enter_exception(&mut self, exception: Exception, next_address: u32) {
-        if (self.cpsr.fiq_disable_bit && exception == Exception::FIQ) || (self.cpsr.irq_disable_bit && exception == Exception::IRQ) {
+        if (self.cpsr.fiq_disable_bit && exception == Exception::FIQ)
+            || (self.cpsr.irq_disable_bit && exception == Exception::IRQ)
+        {
             return;
         }
-        
+
         let exception_mode: OperatingMode = exception.get_mode();
         let exception_bank_index = exception_mode.current_bank_index();
 
@@ -50,7 +55,7 @@ impl CPU {
         self.cpsr.operating_state = OperatingState::ARM;
         self.set_mode(exception_mode);
         self.cpsr.irq_disable_bit = true;
-        
+
         if exception == Exception::FIQ || exception == Exception::Reset {
             self.cpsr.fiq_disable_bit = true;
         }

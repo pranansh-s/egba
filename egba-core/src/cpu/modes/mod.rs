@@ -1,7 +1,7 @@
 use std::fmt;
 
-use bit::BitIndex;
 use crate::cpu::cpu::CPU;
+use bit::BitIndex;
 
 use super::cpu::PC_INDEX;
 
@@ -29,7 +29,6 @@ impl fmt::Display for ShiftType {
     }
 }
 
-
 impl ShiftType {
     pub fn from_bits(bits: usize) -> Self {
         match bits {
@@ -37,7 +36,7 @@ impl ShiftType {
             0b01 => ShiftType::LSR,
             0b10 => ShiftType::ASR,
             0b11 => ShiftType::ROR,
-            _ => unreachable!()
+            _ => unreachable!(),
         }
     }
 }
@@ -57,8 +56,14 @@ impl CPU {
             0b1001 => !self.cpsr.c_condition_bit || self.cpsr.z_condition_bit,
             0b1010 => self.cpsr.n_condition_bit == self.cpsr.v_condition_bit,
             0b1011 => self.cpsr.n_condition_bit != self.cpsr.v_condition_bit,
-            0b1100 => !self.cpsr.z_condition_bit && (self.cpsr.n_condition_bit == self.cpsr.v_condition_bit),
-            0b1101 => self.cpsr.z_condition_bit || (self.cpsr.n_condition_bit != self.cpsr.v_condition_bit),
+            0b1100 => {
+                !self.cpsr.z_condition_bit
+                    && (self.cpsr.n_condition_bit == self.cpsr.v_condition_bit)
+            }
+            0b1101 => {
+                self.cpsr.z_condition_bit
+                    || (self.cpsr.n_condition_bit != self.cpsr.v_condition_bit)
+            }
             0b1110 => true,
             _ => unreachable!(),
         }
@@ -88,12 +93,15 @@ impl CPU {
         let rotate = if inst.bit(4) {
             let rs = bit_r!(inst, 8..12);
             bit_r!(self.reg[rs], 0..8)
-        }
-        else {
+        } else {
             bit_r!(inst, 7..12)
         } as u8;
 
-        let val = if rm == PC_INDEX && inst.bit(4) { self.reg[rm].wrapping_add(4) } else { self.reg[rm] };
+        let val = if rm == PC_INDEX && inst.bit(4) {
+            self.reg[rm].wrapping_add(4)
+        } else {
+            self.reg[rm]
+        };
 
         match ShiftType::from_bits(shift_type) {
             ShiftType::LSL => self.LSL(val, rotate, s),
@@ -112,7 +120,7 @@ impl CPU {
                 }
                 let res = ((value as i32) >> rot) as u32;
                 res
-            },
+            }
             _ => {
                 if set_condition {
                     self.cpsr.c_condition_bit = value.bit(31);
@@ -146,7 +154,7 @@ impl CPU {
             }
         }
     }
-    
+
     fn LSR(&mut self, value: u32, rot: u8, set_condition: bool) -> u32 {
         match rot {
             0 => value,
@@ -170,23 +178,27 @@ impl CPU {
             }
         }
     }
-    
+
     pub fn ROR(&mut self, value: u32, rot: u8, set_condition: bool) -> u32 {
-        let mut res: u32;
-        if rot > 0 || rot == 0 {
-            res = value.rotate_right(rot as u32 % 32);
-            if set_condition {
-                self.cpsr.c_condition_bit = res.bit(31);
-            }
-        }
-        else {
+        if rot == 0 {
             let carry = self.cpsr.c_condition_bit;
-            res = value.rotate_right(1);
+            let mut res = value >> 1;
+            res.set_bit(31, carry);
+            if set_condition {
+                self.cpsr.c_condition_bit = value.bit(0);
+            }
+            res
+        } else {
+            let effective = (rot as u32) % 32;
+            let res = if effective == 0 {
+                value
+            } else {
+                value.rotate_right(effective)
+            };
             if set_condition {
                 self.cpsr.c_condition_bit = res.bit(31);
             }
-            res.set_bit(31, carry);
+            res
         }
-        res
     }
 }

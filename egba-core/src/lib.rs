@@ -1,3 +1,5 @@
+#![allow(non_snake_case)]
+
 pub mod bios;
 pub mod cartridge;
 pub mod cpu;
@@ -7,6 +9,7 @@ pub mod rom;
 
 mod bus;
 mod control;
+mod dma;
 mod memory;
 mod timer;
 mod video;
