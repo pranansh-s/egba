@@ -16,15 +16,19 @@ impl fmt::Display for InvalidROM {
 impl Error for InvalidROM {}
 
 impl Rom {
-    pub fn new(data: &Vec<u8>) -> Self {
-        Self(data.clone().into_boxed_slice())
+    pub fn new(data: &[u8]) -> Self {
+        Self(data.to_vec().into_boxed_slice())
     }
 
     pub fn len(&self) -> usize {
         self.0.len()
     }
 
-    pub fn data(&self) -> &Box<[u8]> {
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    pub fn data(&self) -> &[u8] {
         &self.0
     }
 
@@ -41,7 +45,7 @@ impl Rom {
             let data = self.data();
             for (id, backup_type) in IDS {
                 if data[i..].starts_with(id) {
-                    return backup_type.clone()
+                    return backup_type.clone();
                 }
             }
         }

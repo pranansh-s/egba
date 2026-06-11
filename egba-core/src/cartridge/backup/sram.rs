@@ -1,4 +1,4 @@
-use std::{fs, path::PathBuf};
+use std::{fs, path::Path};
 
 use crate::bus::Bus;
 
@@ -8,12 +8,12 @@ pub struct SRAM(Box<[u8]>);
 
 impl From<Vec<u8>> for SRAM {
     fn from(value: Vec<u8>) -> Self {
-        Self(value.clone().into_boxed_slice())
+        Self(value.into_boxed_slice())
     }
 }
 
 impl BackupBuffer for SRAM {
-    fn save(&self, path: &PathBuf) {
+    fn save(&self, path: &Path) {
         if fs::write(path, self.0.clone()).is_err() {
             panic!("Failed to save data to: {:?}", path.file_name());
         }
@@ -33,5 +33,11 @@ impl Bus for SRAM {
 impl SRAM {
     pub fn new() -> Self {
         Self(<Self as BackupBuffer>::init(32))
+    }
+}
+
+impl Default for SRAM {
+    fn default() -> Self {
+        Self::new()
     }
 }

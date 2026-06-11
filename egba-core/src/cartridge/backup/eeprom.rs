@@ -1,4 +1,4 @@
-use std::{cell::RefCell, fs, path::PathBuf};
+use std::{cell::RefCell, fs, path::Path};
 
 use crate::bus::Bus;
 
@@ -31,7 +31,7 @@ impl From<Vec<u8>> for EEPROM {
         let size = value.len();
         let address_bits = if size <= 512 { 6 } else { 14 };
         Self {
-            data: RefCell::new(value.clone().into_boxed_slice()),
+            data: RefCell::new(value.into_boxed_slice()),
             size,
             address_bits,
             state: RefCell::new(EepromState::Ready),
@@ -43,7 +43,7 @@ impl From<Vec<u8>> for EEPROM {
 }
 
 impl BackupBuffer for EEPROM {
-    fn save(&self, path: &PathBuf) {
+    fn save(&self, path: &Path) {
         if fs::write(path, self.data.borrow().clone()).is_err() {
             panic!("Failed to save data to: {:?}", path.file_name());
         }
@@ -130,7 +130,7 @@ impl Bus for EEPROM {
                     *address >>= 1;
 
                     let mut data_buf = 0u64;
-                    let mut offset = (*address * 8);
+                    let mut offset = *address * 8;
                     if self.size > 0 {
                         offset %= self.size;
                     }
@@ -167,7 +167,7 @@ impl Bus for EEPROM {
                 }
             }
             EepromState::WriteStop => {
-                let mut offset = (*address * 8);
+                let mut offset = *address * 8;
                 if self.size > 0 {
                     offset %= self.size;
                 }

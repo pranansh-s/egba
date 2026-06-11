@@ -13,7 +13,7 @@ pub const SP_INDEX: usize = 13;
 pub struct BankedRegisters {
     pub sp: u32,
     pub lr: u32,
-    pub spsr: u32
+    pub spsr: u32,
 }
 
 pub struct CPU {
@@ -34,7 +34,7 @@ impl CPU {
             banks: [BankedRegisters::default(); 6],
             cpsr: ProgramStatusRegister::new(),
             spsr: 0,
-            pipeline: [0, 0, 0]
+            pipeline: [0, 0, 0],
         }
     }
 
@@ -60,7 +60,7 @@ impl CPU {
         self.banks[old_bank_index].sp = self.reg[SP_INDEX];
         self.banks[old_bank_index].lr = self.reg[LR_INDEX];
         self.banks[old_bank_index].spsr = self.spsr;
-        
+
         self.reg[SP_INDEX] = self.banks[new_bank_index].sp;
         self.reg[LR_INDEX] = self.banks[new_bank_index].lr;
         self.spsr = self.banks[new_bank_index].spsr;
@@ -70,14 +70,14 @@ impl CPU {
         }
     }
 
-    pub fn fetch(&mut self, bus: &mut impl Bus) -> u32 {
+    pub(crate) fn fetch(&mut self, bus: &mut impl Bus) -> u32 {
         let addr = self.reg[PC_INDEX];
         let instr;
         match self.cpsr.operating_state {
             OperatingState::ARM => {
                 instr = bus.read_word(addr);
                 self.reg[PC_INDEX] = self.reg[PC_INDEX].wrapping_add(4);
-            },
+            }
             OperatingState::THUMB => {
                 instr = bus.read_hword(addr) as u32;
                 self.reg[PC_INDEX] = self.reg[PC_INDEX].wrapping_add(2);
@@ -90,28 +90,35 @@ impl CPU {
         match self.cpsr.operating_state {
             OperatingState::ARM => {
                 self.arm_opcodes(bus, instr);
-            },
+            }
             OperatingState::THUMB => {
                 self.thumb_opcodes(bus, bit_r!(instr, 0..16) as u16);
             }
         }
     }
 
-    pub fn step(&mut self, bus: &mut impl Bus) {
+    pub(crate) fn step(&mut self, bus: &mut impl Bus) {
         self.pipeline[0] = self.pipeline[1];
         self.pipeline[1] = self.pipeline[2];
-        
+
         self.execute(bus, self.pipeline[0]);
 
         self.pipeline[2] = self.fetch(bus);
     }
 
-    pub fn flush_pipeline(&mut self, bus: &mut impl Bus) {
+    pub(crate) fn flush_pipeline(&mut self, bus: &mut impl Bus) {
         self.reg[PC_INDEX] &= match self.cpsr.operating_state {
             OperatingState::ARM => !0b11,
             OperatingState::THUMB => !0b1,
         };
 
         self.pipeline[1] = self.fetch(bus);
+        self.pipeline[2] = self.fetch(bus);
+    }
+}
+
+impl Default for CPU {
+    fn default() -> Self {
+        Self::new()
     }
 }

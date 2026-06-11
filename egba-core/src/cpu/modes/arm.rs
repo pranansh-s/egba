@@ -12,10 +12,10 @@ use crate::{
     },
 };
 
-#[allow(non_camel_case_types)]
+#[allow(non_camel_case_types, clippy::too_many_arguments)]
 impl CPU {
     #[bitmatch]
-    pub fn arm_opcodes(&mut self, bus: &mut impl Bus, inst: u32) {
+    pub(crate) fn arm_opcodes(&mut self, bus: &mut impl Bus, inst: u32) {
         if !self.condition_check(inst.bit_range(28..32) as usize) {
             return;
         }
@@ -56,7 +56,7 @@ impl CPU {
             ),
 
             "011?_????_????_????_????_???1_????" => {
-                self.enter_exception(Exception::Undefined, self.arm_pc().wrapping_add(4))
+                self.enter_exception(bus, Exception::Undefined, self.arm_pc().wrapping_add(4))
             }
             "100?_????_????_????_????_????_????" => self.arm_LDM_STM(
                 bus,
@@ -114,9 +114,9 @@ impl CPU {
             ),
 
             "1111_????_????_????_????_????_????" => {
-                self.enter_exception(Exception::SoftwareInterrupt, self.arm_pc().wrapping_add(4))
+                self.enter_exception(bus, Exception::SoftwareInterrupt, self.arm_pc().wrapping_add(4))
             }
-            _ => self.enter_exception(Exception::Undefined, self.arm_pc().wrapping_add(4)),
+            _ => self.enter_exception(bus, Exception::Undefined, self.arm_pc().wrapping_add(4)),
         }
     }
 
@@ -150,14 +150,14 @@ impl CPU {
         } else {
             self.reg[bit_r!(op, 0..4)]
         };
-        let mask = if f { 0xf000_0000 } else { 0xf000_00df };
+        // f = "flags only" (bit16 was clear, meaning only flag bits writable)
+        // !f = "full" (bit16 was set, meaning control bits also writable)
+        let mask = if f { 0xF000_0000 } else { 0xF00000DF };
 
         if p {
             self.spsr = (self.spsr & !mask) | (bits & mask);
         } else {
-            let cpsr = ProgramStatusRegister::from((u32::from(self.cpsr) & !mask) | (bits & mask));
-            self.set_mode(cpsr.mode);
-            self.cpsr = cpsr;
+            self.cpsr = ProgramStatusRegister::from((u32::from(self.cpsr) & !mask) | (bits & mask));
         }
     }
 
@@ -398,11 +398,9 @@ impl CPU {
         }
 
         if w && !(l && r_list.bit(rn)) {
-            self.reg[rn] = match (p, u) {
-                (false, true) => addr,
-                (true, true) => addr.wrapping_sub(4),
-                (false, false) => addr.wrapping_sub(4 * (regs_length + 1)),
-                (true, false) => addr.wrapping_sub(4 * regs_length),
+            self.reg[rn] = match u {
+                true => self.reg[rn].wrapping_add(4 * regs_length),
+                false => self.reg[rn].wrapping_sub(4 * regs_length),
             };
         }
 

@@ -2,7 +2,7 @@ pub mod eeprom;
 pub mod flash;
 pub mod sram;
 
-use std::path::PathBuf;
+use std::path::Path;
 
 use self::{eeprom::EEPROM, flash::Flash, sram::SRAM};
 
@@ -27,5 +27,5 @@ pub trait BackupBuffer {
         vec![0; size * 1024].into_boxed_slice()
     }
 
-    fn save(&self, path: &PathBuf) {}
+    fn save(&self, _path: &Path) {}
 }

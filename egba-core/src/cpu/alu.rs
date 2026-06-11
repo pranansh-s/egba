@@ -5,7 +5,7 @@ pub fn is_single_operand(opcode: usize) -> bool {
 }
 
 pub fn is_test(opcode: usize) -> bool {
-    matches!(opcode, 0b1000 | 0b1001 | 0b1010 | 0b1011)
+    matches!(opcode, 0b1000..=0b1011)
 }
 
 impl CPU {

@@ -12,6 +12,7 @@ pub(crate) struct InterruptControl {
     request: u16,
 }
 
+#[allow(dead_code)]
 #[derive(Clone, Copy)]
 pub(crate) enum InterruptType {
     VBlank = 0,
@@ -65,9 +66,12 @@ impl Bus for InterruptControl {
 }
 
 impl InterruptControl {
-    pub(crate) fn step(&mut self, cpu: &mut CPU, system: &mut SystemControl) {
+    /// Check pending interrupts and deliver IRQ if enabled.
+    /// Returns `true` if an IRQ exception was accepted and the caller
+    /// must flush the CPU pipeline.
+    pub(crate) fn step(&mut self, cpu: &mut CPU, system: &mut SystemControl) -> bool {
         if (self.enable & self.request) == 0 {
-            return;
+            return false;
         }
 
         system.update_power(PowerMode::Active);
@@ -76,8 +80,9 @@ impl InterruptControl {
                 OperatingState::ARM => cpu.arm_pc(),
                 OperatingState::THUMB => cpu.thumb_pc(),
             };
-            cpu.enter_exception(Exception::IRQ, addr.wrapping_add(4));
+            return cpu.setup_exception(Exception::IRQ, addr.wrapping_add(4));
         }
+        false
     }
 
     pub(crate) fn request(&mut self, interrupt: InterruptType) {

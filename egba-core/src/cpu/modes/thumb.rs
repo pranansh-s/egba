@@ -13,7 +13,7 @@ use crate::{
 
 impl CPU {
     #[bitmatch]
-    pub fn thumb_opcodes(&mut self, bus: &mut impl Bus, inst: u16) {
+    pub(crate) fn thumb_opcodes(&mut self, bus: &mut impl Bus, inst: u16) {
         #[bitmatch]
         match inst.bit_range(0..16) {
             //1000_1000_0001_1010
@@ -102,6 +102,7 @@ impl CPU {
                 bit_r!(inst, 0..8) as u8,
             ),
             "1101_1111_????_????" => self.enter_exception(
+                bus,
                 Exception::SoftwareInterrupt,
                 self.thumb_pc().wrapping_add(2),
             ),
@@ -111,7 +112,7 @@ impl CPU {
 
             "1110_0???_????_????" => self.thumb_format18(bus, bit_r!(inst, 0..11)),
             "1111_????_????_????" => self.thumb_format19(bus, inst.bit(11), bit_r!(inst, 0..11)),
-            _ => self.enter_exception(Exception::Undefined, self.thumb_pc().wrapping_add(2)),
+            _ => self.enter_exception(bus, Exception::Undefined, self.thumb_pc().wrapping_add(2)),
         }
     }
 
@@ -333,6 +334,8 @@ impl CPU {
 
     fn thumb_format15(&mut self, bus: &mut impl Bus, l: bool, rb: usize, r_list: u8) {
         let mut addr = self.reg[rb];
+        let rb_in_list = r_list.bit(rb);
+
         for r in 0..=7 {
             if r_list.bit(r) {
                 if l {
@@ -345,7 +348,11 @@ impl CPU {
             }
         }
 
-        self.reg[rb] = addr;
+        // For LDM, if rb is in the register list, the loaded value takes priority
+        // and writeback is skipped. For STM, always write back.
+        if !l || !rb_in_list {
+            self.reg[rb] = addr;
+        }
     }
 
     fn thumb_format16(&mut self, bus: &mut impl Bus, cond: usize, offset: u8) {

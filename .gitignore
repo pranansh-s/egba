@@ -2,3 +2,7 @@
 **/target
 
 /roms
+/tests/roms/
+
+CLAUDE.md
+GAP_ANALYSIS.md

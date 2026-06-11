@@ -99,9 +99,9 @@ impl Bus for Memory {
                 }
             }
             0x0500_0000..=0x05FF_FFFF => {
-                let pal_addr = (addr & 0x3FE) as usize;
+                // Palette memory is 16-bit, but byte writes should affect the correct byte
+                let pal_addr = (addr & 0x3FF) as usize;
                 self.video.palette[pal_addr] = value;
-                self.video.palette[pal_addr + 1] = value;
             }
 
             0x0600_0000..=0x06FF_FFFF => {
@@ -111,13 +111,17 @@ impl Bus for Memory {
                 } else {
                     mirror
                 };
+                // Bitmap modes (3, 4, 5) need word-aligned writes
                 let bg_mode = self.video.read_byte(0x000) & 0x7;
                 if bg_mode >= 3 {
                     let aligned = (effective & !1) as usize;
                     if aligned + 1 < self.video.vram.len() {
-                        self.video.vram[aligned] = value;
-                        self.video.vram[aligned + 1] = value;
+                        // Only write to the correct byte based on address bit 0
+                        self.video.vram[effective as usize] = value;
                     }
+                } else {
+                    // For tiled modes, byte writes work normally
+                    self.video.vram[effective as usize] = value;
                 }
             }
             0x0700_0000..=0x07FF_FFFF => {}

@@ -1,8 +1,9 @@
 use crate::{
     bios::Bios,
+    bus::Bus,
     cartridge::Cartridge,
-    control::PowerMode,
-    cpu::{cpu::CPU, exception::Exception, psr::OperatingState},
+    control::{InterruptType, PowerMode},
+    cpu::cpu::CPU,
     dma::{Dma, DmaEvent},
     memory::Memory,
     timer::Timers,
@@ -13,7 +14,7 @@ const CYCLES_PER_FRAME: u32 = 280896;
 
 pub struct GBA {
     cpu: CPU,
-    pub(crate) memory: Memory,
+    memory: Memory,
 }
 
 impl GBA {
@@ -32,7 +33,7 @@ impl GBA {
         &self.cpu
     }
 
-    pub fn step(&mut self) {
+    fn step(&mut self) {
         let power = self.memory.system.get_power_mode();
         if power == PowerMode::Active {
             self.cpu.step(&mut self.memory);
@@ -65,9 +66,13 @@ impl GBA {
             self.memory.system.step();
         }
 
-        self.memory
+        let irq_accepted = self
+            .memory
             .interrupt
             .step(&mut self.cpu, &mut self.memory.system);
+        if irq_accepted {
+            self.cpu.flush_pipeline(&mut self.memory);
+        }
     }
 
     pub fn run_frame(&mut self) {
@@ -76,8 +81,37 @@ impl GBA {
         }
     }
 
+    /// Reads a byte from the current GBA memory map.
+    ///
+    /// GBATEK: GBA Memory Map
+    pub fn read_byte(&self, addr: u32) -> u8 {
+        self.memory.read_byte(addr)
+    }
+
+    /// Reads a halfword from the current GBA memory map.
+    ///
+    /// GBATEK: GBA Memory Map
+    pub fn read_hword(&self, addr: u32) -> u16 {
+        self.memory.read_hword(addr)
+    }
+
+    /// Reads a word from the current GBA memory map.
+    ///
+    /// GBATEK: GBA Memory Map
+    pub fn read_word(&self, addr: u32) -> u32 {
+        self.memory.read_word(addr)
+    }
+
     pub fn framebuffer(&self) -> &[u32] {
         self.memory.video.framebuffer()
+    }
+
+    pub fn update_keypad(&mut self, state: u16) {
+        self.memory.keypad.keystate = state;
+
+        if self.memory.keypad.should_interrupt() {
+            self.memory.interrupt.request(InterruptType::Keypad);
+        }
     }
 
     fn run_dma(&mut self, event: DmaEvent) {

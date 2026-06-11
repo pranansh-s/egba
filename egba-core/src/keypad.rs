@@ -1,10 +1,10 @@
 use bit::BitIndex;
 
-use crate::{bus::Bus, control::InterruptType, gba::GBA};
+use crate::bus::Bus;
 
 pub(crate) struct Keypad {
-    keystate: u16,
-    keycnt: u16,
+    pub(crate) keystate: u16,
+    pub(crate) keycnt: u16,
 }
 
 impl Default for Keypad {
@@ -17,7 +17,7 @@ impl Default for Keypad {
 }
 
 impl Keypad {
-    fn should_interrupt(&self) -> bool {
+    pub(crate) fn should_interrupt(&self) -> bool {
         if !self.keycnt.bit(14) {
             return false;
         }
@@ -29,16 +29,6 @@ impl Keypad {
             pressed > 0 && (pressed & selection) == selection
         } else {
             (pressed & selection) > 0
-        }
-    }
-}
-
-impl GBA {
-    pub fn update_keypad(&mut self, state: u16) {
-        self.memory.keypad.keystate = state;
-
-        if self.memory.keypad.should_interrupt() {
-            self.memory.interrupt.request(InterruptType::Keypad);
         }
     }
 }

@@ -53,7 +53,9 @@ impl From<u32> for OperatingMode {
             0b10111 => OperatingMode::abt,
             0b11011 => OperatingMode::und,
             0b11111 => OperatingMode::sys,
-            val @ _ => panic!("Unknown Operating mode 0b{:05b}", val),
+            // Invalid mode bits can occur from corrupted SPSR restores;
+            // fall back to system mode rather than crashing.
+            _ => OperatingMode::sys,
         }
     }
 }
@@ -90,6 +92,12 @@ impl ProgramStatusRegister {
             z_condition_bit: false,
             n_condition_bit: false,
         }
+    }
+}
+
+impl Default for ProgramStatusRegister {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

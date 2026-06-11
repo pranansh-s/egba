@@ -102,6 +102,7 @@ impl Video {
         if self.dot_cycle >= SCANLINE_CYCLES {
             self.dot_cycle = 0;
             self.dispstat.set_bit(1, false);
+
             self.vcount += 1;
 
             if self.vcount == HEIGHT as u16 {
@@ -118,7 +119,8 @@ impl Video {
                 self.dispstat.set_bit(0, false);
             }
 
-            let lyc = self.dispstat.bit_range(8..16) as u16;
+            // LYC match: triggered when VCOUNT equals LYC value
+            let lyc = self.dispstat.bit_range(8..16);
             let match_flag = self.vcount == lyc;
             self.dispstat.set_bit(2, match_flag);
             if match_flag && self.dispstat.bit(5) {
@@ -134,7 +136,7 @@ impl Video {
     }
 
     fn bg_mode(&self) -> u16 {
-        self.dispcnt.bit_range(0..3) as u16
+        self.dispcnt.bit_range(0..3)
     }
 
     fn forced_blank(&self) -> bool {
@@ -180,7 +182,7 @@ impl Bus for Video {
                 }
             }
 
-            0x010..=0x01F | 0x028..=0x03F | 0x020..=0x027 | 0x040..=0x04B => 0,
+            0x010..=0x04B => 0,
 
             0x050 => self.bldcnt as u8,
             0x051 => (self.bldcnt >> 8) as u8,

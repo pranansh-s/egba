@@ -113,13 +113,14 @@ impl EgbaUI {
             )
             .expect("Failed to create texture");
 
+        // PixelFormatEnum::RGB888 is 32-bit (4 bytes per pixel), SDL expects ABGR order in memory
         let pixel_data: Vec<u8> = framebuffer
             .iter()
             .flat_map(|&pixel| {
                 let r = ((pixel >> 16) & 0xFF) as u8;
                 let g = ((pixel >> 8) & 0xFF) as u8;
                 let b = (pixel & 0xFF) as u8;
-                [0u8, r, g, b]
+                [0u8, r, g, b] // Alpha padding byte first (little-endian ABGR)
             })
             .collect();
 

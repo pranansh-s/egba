@@ -60,21 +60,9 @@ impl DmaChannel {
     }
 }
 
+#[derive(Default)]
 pub(crate) struct Dma {
     channels: [DmaChannel; 4],
-}
-
-impl Default for Dma {
-    fn default() -> Self {
-        Self {
-            channels: [
-                DmaChannel::default(),
-                DmaChannel::default(),
-                DmaChannel::default(),
-                DmaChannel::default(),
-            ],
-        }
-    }
 }
 
 impl Dma {
@@ -167,6 +155,7 @@ impl Dma {
         }
     }
 
+    #[allow(dead_code)]
     pub(crate) fn channel_irq_enabled(&self, index: usize) -> bool {
         self.channels[index].irq_enabled()
     }

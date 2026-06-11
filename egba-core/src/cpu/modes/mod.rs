@@ -111,27 +111,28 @@ impl CPU {
         }
     }
 
-    fn ASR(&mut self, value: u32, rot: u8, set_condition: bool) -> u32 {
+    pub(crate) fn ASR(&mut self, value: u32, rot: u8, set_condition: bool) -> u32 {
         match rot {
-            0 => value,
-            1..31 => {
+            1..=31 => {
                 if set_condition {
                     self.cpsr.c_condition_bit = value.bit(rot as usize - 1);
                 }
-                let res = ((value as i32) >> rot) as u32;
-                res
+                ((value as i32) >> rot) as u32
             }
             _ => {
                 if set_condition {
                     self.cpsr.c_condition_bit = value.bit(31);
                 }
-                let res = if value.bit(31) { !0 } else { 0 };
-                res
+                if value.bit(31) {
+                    !0
+                } else {
+                    0
+                }
             }
         }
     }
 
-    fn LSL(&mut self, value: u32, rot: u8, set_condition: bool) -> u32 {
+    pub(crate) fn LSL(&mut self, value: u32, rot: u8, set_condition: bool) -> u32 {
         match rot {
             0 => value,
             1..=31 => {
@@ -155,20 +156,19 @@ impl CPU {
         }
     }
 
-    fn LSR(&mut self, value: u32, rot: u8, set_condition: bool) -> u32 {
+    pub(crate) fn LSR(&mut self, value: u32, rot: u8, set_condition: bool) -> u32 {
         match rot {
-            0 => value,
-            1..=31 => {
-                if set_condition {
-                    self.cpsr.c_condition_bit = value.bit(rot as usize - 1);
-                }
-                value >> rot
-            }
-            32 => {
+            0 => {
                 if set_condition {
                     self.cpsr.c_condition_bit = value.bit(31);
                 }
                 0
+            }
+            1..=32 => {
+                if set_condition {
+                    self.cpsr.c_condition_bit = value.bit(rot as usize - 1);
+                }
+                value >> rot
             }
             _ => {
                 if set_condition {
@@ -180,25 +180,24 @@ impl CPU {
     }
 
     pub fn ROR(&mut self, value: u32, rot: u8, set_condition: bool) -> u32 {
-        if rot == 0 {
-            let carry = self.cpsr.c_condition_bit;
-            let mut res = value >> 1;
-            res.set_bit(31, carry);
-            if set_condition {
-                self.cpsr.c_condition_bit = value.bit(0);
-            }
-            res
-        } else {
-            let effective = (rot as u32) % 32;
-            let res = if effective == 0 {
-                value
+        if rot.is_multiple_of(32) {
+            if rot == 0 {
+                let carry = self.cpsr.c_condition_bit as u32;
+                if set_condition {
+                    self.cpsr.c_condition_bit = value.bit(0);
+                }
+                (value >> 1) | (carry << 31)
             } else {
-                value.rotate_right(effective)
-            };
-            if set_condition {
-                self.cpsr.c_condition_bit = res.bit(31);
+                if set_condition {
+                    self.cpsr.c_condition_bit = value.bit(31);
+                }
+                value
             }
-            res
+        } else {
+            if set_condition {
+                self.cpsr.c_condition_bit = value.bit((rot % 32) as usize - 1);
+            }
+            value.rotate_right(rot as u32)
         }
     }
 }

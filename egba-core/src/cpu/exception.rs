@@ -1,3 +1,5 @@
+use crate::bus::Bus;
+
 use super::{
     cpu::{CPU, PC_INDEX},
     psr::{OperatingMode, OperatingState},
@@ -39,11 +41,22 @@ impl Exception {
 }
 
 impl CPU {
-    pub fn enter_exception(&mut self, exception: Exception, next_address: u32) {
+    /// Enter an exception and flush the pipeline.
+    /// Used from instruction handlers (SWI, Undefined) where bus is available.
+    pub(crate) fn enter_exception(&mut self, bus: &mut impl Bus, exception: Exception, next_address: u32) {
+        if self.setup_exception(exception, next_address) {
+            self.flush_pipeline(bus);
+        }
+    }
+
+    /// Set up exception state without flushing the pipeline.
+    /// Returns true if the exception was accepted (not masked).
+    /// The caller is responsible for flushing the pipeline.
+    pub(crate) fn setup_exception(&mut self, exception: Exception, next_address: u32) -> bool {
         if (self.cpsr.fiq_disable_bit && exception == Exception::FIQ)
             || (self.cpsr.irq_disable_bit && exception == Exception::IRQ)
         {
-            return;
+            return false;
         }
 
         let exception_mode: OperatingMode = exception.get_mode();
@@ -61,5 +74,7 @@ impl CPU {
         }
 
         self.reg[PC_INDEX] = exception.get_vector_address();
+        true
     }
 }
+

@@ -29,15 +29,12 @@ fn run(ui: &mut EgbaUI, gba: &mut GBA, debug: bool) {
                     return;
                 }
                 Event::KeyUp {
-                    keycode: Some(keycode),
+                    keycode: Some(Keycode::Escape),
                     ..
-                } => match keycode {
-                    Keycode::Escape => {
-                        println!("Escape key pressed. Exiting.");
-                        return;
-                    }
-                    _ => {}
-                },
+                } => {
+                    println!("Escape key pressed. Exiting.");
+                    return;
+                }
                 _ => {}
             }
         }
@@ -48,6 +45,7 @@ fn run(ui: &mut EgbaUI, gba: &mut GBA, debug: bool) {
         if debug {
             gba.show_stats();
         }
+
         gba.run_frame();
 
         ui.render_frame(gba.framebuffer());

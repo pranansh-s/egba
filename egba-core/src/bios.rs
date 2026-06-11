@@ -5,7 +5,6 @@ use crate::{
 
 pub struct Bios {
     rom: Rom,
-    skip_bios: bool,
 }
 
 impl Bios {
@@ -14,10 +13,7 @@ impl Bios {
             return Err(InvalidROM);
         }
 
-        Ok(Self {
-            rom,
-            skip_bios: false,
-        })
+        Ok(Self { rom })
     }
 
     pub fn read(&self, addr: u32) -> u8 {

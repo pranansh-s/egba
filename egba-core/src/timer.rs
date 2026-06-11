@@ -30,21 +30,9 @@ impl Timer {
     }
 }
 
+#[derive(Default)]
 pub(crate) struct Timers {
     timers: [Timer; 4],
-}
-
-impl Default for Timers {
-    fn default() -> Self {
-        Self {
-            timers: [
-                Timer::default(),
-                Timer::default(),
-                Timer::default(),
-                Timer::default(),
-            ],
-        }
-    }
 }
 
 impl Timers {

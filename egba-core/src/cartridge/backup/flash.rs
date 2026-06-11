@@ -1,4 +1,4 @@
-use std::{fs, path::PathBuf};
+use std::{fs, path::Path};
 
 use super::BackupBuffer;
 use crate::bus::Bus;
@@ -57,7 +57,7 @@ impl From<Vec<u8>> for Flash {
             (0xC2, 0x09)
         };
         Self {
-            data: value.clone().into_boxed_slice(),
+            data: value.into_boxed_slice(),
             size,
             state: FlashState::Ready,
             bank: 0,
@@ -68,7 +68,7 @@ impl From<Vec<u8>> for Flash {
 }
 
 impl BackupBuffer for Flash {
-    fn save(&self, path: &PathBuf) {
+    fn save(&self, path: &Path) {
         if fs::write(path, self.data.clone()).is_err() {
             panic!("Failed to save data to: {:?}", path.file_name());
         }
