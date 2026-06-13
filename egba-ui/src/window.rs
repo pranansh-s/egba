@@ -1,5 +1,5 @@
 use sdl2::{
-    keyboard::Keycode,
+    audio::{AudioQueue, AudioSpecDesired},
     pixels::{Color, PixelFormatEnum},
     rect::Rect,
     render::{Canvas, TextureAccess},
@@ -13,26 +13,41 @@ const SCALE: u32 = 3;
 
 use std::{error::Error, fmt};
 
+use sdl2::keyboard::Scancode;
+
 pub fn get_keystate(event_pump: &EventPump) -> u16 {
     let mut keystate = 0xFFFF;
     let keyboard_state = event_pump.keyboard_state();
-    for key in keyboard_state
-        .pressed_scancodes()
-        .filter_map(Keycode::from_scancode)
-    {
-        match key {
-            Keycode::A => keystate &= !(1 << 0),
-            Keycode::S => keystate &= !(1 << 1),
-            Keycode::Z => keystate &= !(1 << 2),
-            Keycode::X => keystate &= !(1 << 3),
-            Keycode::Return => keystate &= !(1 << 4),
-            Keycode::Space => keystate &= !(1 << 5),
-            Keycode::Up => keystate &= !(1 << 6),
-            Keycode::Down => keystate &= !(1 << 7),
-            Keycode::Left => keystate &= !(1 << 8),
-            Keycode::Right => keystate &= !(1 << 9),
-            _ => {}
-        }
+
+    if keyboard_state.is_scancode_pressed(Scancode::A) {
+        keystate &= !(1 << 0);
+    }
+    if keyboard_state.is_scancode_pressed(Scancode::S) {
+        keystate &= !(1 << 1);
+    }
+    if keyboard_state.is_scancode_pressed(Scancode::Z) {
+        keystate &= !(1 << 2);
+    }
+    if keyboard_state.is_scancode_pressed(Scancode::X) {
+        keystate &= !(1 << 3);
+    }
+    if keyboard_state.is_scancode_pressed(Scancode::Return) {
+        keystate &= !(1 << 4);
+    }
+    if keyboard_state.is_scancode_pressed(Scancode::Space) {
+        keystate &= !(1 << 5);
+    }
+    if keyboard_state.is_scancode_pressed(Scancode::Up) {
+        keystate &= !(1 << 6);
+    }
+    if keyboard_state.is_scancode_pressed(Scancode::Down) {
+        keystate &= !(1 << 7);
+    }
+    if keyboard_state.is_scancode_pressed(Scancode::Left) {
+        keystate &= !(1 << 8);
+    }
+    if keyboard_state.is_scancode_pressed(Scancode::Right) {
+        keystate &= !(1 << 9);
     }
     keystate
 }
@@ -67,6 +82,7 @@ impl Error for EgbaUIError {}
 pub struct EgbaUI {
     canvas: Canvas<Window>,
     context: Sdl,
+    audio_device: AudioQueue<i16>,
 }
 
 impl EgbaUI {
@@ -92,9 +108,26 @@ impl EgbaUI {
         canvas.clear();
         canvas.present();
 
+        let audio_subsystem = context
+            .audio()
+            .map_err(|e| EgbaUIError::AudioInitError(e.to_string()))?;
+
+        let desired_spec = AudioSpecDesired {
+            freq: Some(32768),
+            channels: Some(2),
+            samples: Some(512),
+        };
+
+        let audio_device = audio_subsystem
+            .open_queue::<i16, _>(None, &desired_spec)
+            .map_err(|e| EgbaUIError::AudioInitError(e.to_string()))?;
+
+        audio_device.resume();
+
         Ok(Self {
             canvas,
             context,
+            audio_device,
         })
     }
 
@@ -142,5 +175,20 @@ impl EgbaUI {
     pub fn clear(&mut self) {
         self.canvas.set_draw_color(Color::RGB(0, 0, 0));
         self.canvas.clear();
+    }
+
+    /// Queue audio samples to the SDL2 audio device.
+    /// Accepts a slice of (left, right) i16 sample pairs.
+    pub fn queue_audio(&mut self, samples: &[(i16, i16)]) {
+        if samples.is_empty() {
+            return;
+        }
+        // Interleave stereo samples into a flat i16 buffer
+        let interleaved: Vec<i16> = samples
+            .iter()
+            .flat_map(|&(l, r)| [l, r])
+            .collect();
+        // Ignore errors from queue_audio — audio glitches are non-fatal
+        let _ = self.audio_device.queue_audio(&interleaved);
     }
 }

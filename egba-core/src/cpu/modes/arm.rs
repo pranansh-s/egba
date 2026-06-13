@@ -416,6 +416,8 @@ impl CPU {
 
         if s {
             self.set_NZ(prod);
+            // ARM7TDMI: carry is destroyed by multiply
+            self.cpsr.c_condition_bit = false;
         }
     }
 

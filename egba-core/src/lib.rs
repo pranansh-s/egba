@@ -7,6 +7,7 @@ pub mod gba;
 pub mod keypad;
 pub mod rom;
 
+mod apu;
 mod bus;
 mod control;
 mod dma;

@@ -36,6 +36,8 @@ impl GBA {
     fn step(&mut self) {
         let power = self.memory.system.get_power_mode();
         if power == PowerMode::Active {
+            let pc = self.cpu.reg[crate::cpu::cpu::PC_INDEX];
+            self.memory.bios_readable = pc < 0x0000_4000;
             self.cpu.step(&mut self.memory);
         }
 
@@ -51,6 +53,20 @@ impl GBA {
                     self.memory.interrupt.request(Timers::irq_type(i));
                 }
             }
+
+            for timer_id in 0u8..2 {
+                if timer_overflow & (1 << timer_id) != 0 {
+                    let refill = self.memory.apu.on_timer_overflow(timer_id);
+                    if refill & 1 != 0 {
+                        self.run_dma(DmaEvent::Special);
+                    }
+                    if refill & 2 != 0 {
+                        self.run_dma(DmaEvent::Special);
+                    }
+                }
+            }
+
+            self.memory.apu.step(1);
 
             match video_event {
                 VideoEvent::HBlank => {
@@ -81,23 +97,14 @@ impl GBA {
         }
     }
 
-    /// Reads a byte from the current GBA memory map.
-    ///
-    /// GBATEK: GBA Memory Map
     pub fn read_byte(&self, addr: u32) -> u8 {
         self.memory.read_byte(addr)
     }
 
-    /// Reads a halfword from the current GBA memory map.
-    ///
-    /// GBATEK: GBA Memory Map
     pub fn read_hword(&self, addr: u32) -> u16 {
         self.memory.read_hword(addr)
     }
 
-    /// Reads a word from the current GBA memory map.
-    ///
-    /// GBATEK: GBA Memory Map
     pub fn read_word(&self, addr: u32) -> u32 {
         self.memory.read_word(addr)
     }
@@ -112,6 +119,10 @@ impl GBA {
         if self.memory.keypad.should_interrupt() {
             self.memory.interrupt.request(InterruptType::Keypad);
         }
+    }
+
+    pub fn drain_audio(&mut self) -> Vec<(i16, i16)> {
+        self.memory.apu.drain_samples()
     }
 
     fn run_dma(&mut self, event: DmaEvent) {

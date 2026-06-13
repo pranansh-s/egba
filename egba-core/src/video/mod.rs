@@ -7,6 +7,9 @@ mod background;
 mod render;
 mod sprite;
 
+#[cfg(test)]
+mod tests;
+
 pub(crate) const WIDTH: usize = 240;
 pub(crate) const HEIGHT: usize = 160;
 const TOTAL_LINES: u16 = 228;
@@ -14,7 +17,7 @@ const HDRAW_CYCLES: u32 = 960;
 const HBLANK_CYCLES: u32 = 272;
 const SCANLINE_CYCLES: u32 = HDRAW_CYCLES + HBLANK_CYCLES;
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum VideoEvent {
     None,
     HBlank,
@@ -37,6 +40,11 @@ pub(crate) struct Video {
     bgref_x: [u32; 2],
     bgref_y: [u32; 2],
     bgaffine: [[u16; 4]; 2],
+    /// Internal affine reference point latches (28-bit signed fixed-point 20.8).
+    /// These are copied from bgref_x/y on VBlank and on register write,
+    /// then advanced each scanline by PB (X) and PD (Y).
+    pub(crate) internal_ref_x: [i32; 2],
+    pub(crate) internal_ref_y: [i32; 2],
     win_h: [u16; 2],
     win_v: [u16; 2],
     winin: u16,
@@ -65,6 +73,8 @@ impl Video {
             bgref_x: [0; 2],
             bgref_y: [0; 2],
             bgaffine: [[0; 4]; 2],
+            internal_ref_x: [0; 2],
+            internal_ref_y: [0; 2],
             win_h: [0; 2],
             win_v: [0; 2],
             winin: 0,
@@ -89,6 +99,15 @@ impl Video {
 
             if self.vcount < HEIGHT as u16 {
                 self.render_scanline();
+
+                // Advance affine reference points by PB/PD after each visible scanline
+                for i in 0..2 {
+                    let pb = self.bgaffine[i][1] as i16 as i32;
+                    let pd = self.bgaffine[i][3] as i16 as i32;
+                    self.internal_ref_x[i] = self.internal_ref_x[i].wrapping_add(pb);
+                    self.internal_ref_y[i] = self.internal_ref_y[i].wrapping_add(pd);
+                }
+
                 event = VideoEvent::HBlank;
 
                 if self.dispstat.bit(4) {
@@ -108,6 +127,12 @@ impl Video {
             if self.vcount == HEIGHT as u16 {
                 self.dispstat.set_bit(0, true);
                 event = VideoEvent::VBlank;
+
+                // Latch affine reference points from registers on VBlank
+                for i in 0..2 {
+                    self.internal_ref_x[i] = self.sign_extend_28(self.bgref_x[i]);
+                    self.internal_ref_y[i] = self.sign_extend_28(self.bgref_y[i]);
+                }
 
                 if self.dispstat.bit(3) {
                     irq = Some(InterruptType::VBlank);
@@ -155,11 +180,20 @@ impl Video {
         }
     }
 
-    fn rgb555_to_rgb888(&self, color: u16) -> u32 {
+    pub(crate) fn rgb555_to_rgb888(&self, color: u16) -> u32 {
         let r = ((color & 0x1F) as u32) << 3;
         let g = (((color >> 5) & 0x1F) as u32) << 3;
         let b = (((color >> 10) & 0x1F) as u32) << 3;
         (r << 16) | (g << 8) | b
+    }
+
+    /// Sign-extend a 28-bit fixed-point value to i32
+    pub(crate) fn sign_extend_28(&self, val: u32) -> i32 {
+        if val & (1 << 27) != 0 {
+            (val | 0xF000_0000) as i32
+        } else {
+            (val & 0x0FFF_FFFF) as i32
+        }
     }
 }
 
@@ -252,10 +286,12 @@ impl Bus for Video {
             0x028..=0x02B => {
                 let shift = ((addr - 0x028) * 8) as usize;
                 self.bgref_x[0] = (self.bgref_x[0] & !(0xFF << shift)) | ((value as u32) << shift);
+                self.internal_ref_x[0] = self.sign_extend_28(self.bgref_x[0]);
             }
             0x02C..=0x02F => {
                 let shift = ((addr - 0x02C) * 8) as usize;
                 self.bgref_y[0] = (self.bgref_y[0] & !(0xFF << shift)) | ((value as u32) << shift);
+                self.internal_ref_y[0] = self.sign_extend_28(self.bgref_y[0]);
             }
 
             0x030..=0x037 => {
@@ -271,10 +307,12 @@ impl Bus for Video {
             0x038..=0x03B => {
                 let shift = ((addr - 0x038) * 8) as usize;
                 self.bgref_x[1] = (self.bgref_x[1] & !(0xFF << shift)) | ((value as u32) << shift);
+                self.internal_ref_x[1] = self.sign_extend_28(self.bgref_x[1]);
             }
             0x03C..=0x03F => {
                 let shift = ((addr - 0x03C) * 8) as usize;
                 self.bgref_y[1] = (self.bgref_y[1] & !(0xFF << shift)) | ((value as u32) << shift);
+                self.internal_ref_y[1] = self.sign_extend_28(self.bgref_y[1]);
             }
 
             0x040 => {

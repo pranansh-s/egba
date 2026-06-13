@@ -171,7 +171,11 @@ impl CPU {
             0b1010 => self.SUB(op, op2, true),
             0b1011 => self.ADD(op, op2, true),
             0b1100 => self.ORR(op, op2),
-            0b1101 => op.wrapping_mul(op2),
+            0b1101 => {
+                // MUL: carry flag is destroyed on ARM7TDMI
+                self.cpsr.c_condition_bit = false;
+                op.wrapping_mul(op2)
+            }
             0b1110 => self.BIC(op, op2),
             0b1111 => self.MVN(op2),
             _ => unreachable!(),

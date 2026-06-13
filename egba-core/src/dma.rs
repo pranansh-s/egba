@@ -69,6 +69,8 @@ impl Dma {
     pub(crate) fn run(&mut self, event: DmaEvent, memory: &mut dyn DmaMemory) -> u8 {
         let mut irq_flags: u8 = 0;
 
+        // Process channels in priority order (0 = highest).
+        // Only one channel runs per invocation for a given event.
         for i in 0..4 {
             if !self.channels[i].enabled() || !self.channels[i].running {
                 continue;
@@ -78,7 +80,16 @@ impl Dma {
                 continue;
             }
 
-            self.execute_transfer(i, memory);
+            // Sound FIFO DMA: channels 1/2 with Special timing
+            // transfer exactly 4 words regardless of count register
+            let is_fifo_dma = (i == 1 || i == 2)
+                && self.channels[i].start_timing() == DmaEvent::Special;
+
+            if is_fifo_dma {
+                self.execute_fifo_transfer(i, memory);
+            } else {
+                self.execute_transfer(i, memory);
+            }
 
             if self.channels[i].irq_enabled() {
                 irq_flags |= 1 << i;
@@ -125,8 +136,10 @@ impl Dma {
             _ => step as i32,
         };
 
-        let mut src = self.channels[ch].internal_src;
-        let mut dst = self.channels[ch].internal_dst;
+        let src_mask = Self::src_addr_mask(ch);
+        let dst_mask = Self::dst_addr_mask(ch);
+        let mut src = self.channels[ch].internal_src & src_mask;
+        let mut dst = self.channels[ch].internal_dst & dst_mask;
 
         for _ in 0..count {
             if word32 {
@@ -137,12 +150,49 @@ impl Dma {
                 memory.dma_write_hword(dst, val);
             }
 
-            src = (src as i32).wrapping_add(src_step) as u32;
-            dst = (dst as i32).wrapping_add(dst_step) as u32;
+            src = ((src as i32).wrapping_add(src_step) as u32) & src_mask;
+            dst = ((dst as i32).wrapping_add(dst_step) as u32) & dst_mask;
         }
 
         self.channels[ch].internal_src = src;
         self.channels[ch].internal_dst = dst;
+    }
+
+    /// Sound FIFO DMA: transfer exactly 4 words from source to FIFO address.
+    /// Destination is fixed, source increments, always 32-bit transfers.
+    fn execute_fifo_transfer(&mut self, ch: usize, memory: &mut dyn DmaMemory) {
+        let src_mask = Self::src_addr_mask(ch);
+        let mut src = self.channels[ch].internal_src & src_mask;
+        let dst = self.channels[ch].internal_dst; // Fixed destination (FIFO address)
+
+        for _ in 0..4 {
+            let val = memory.dma_read_word(src);
+            memory.dma_write_word(dst, val);
+            src = src.wrapping_add(4) & src_mask;
+        }
+
+        self.channels[ch].internal_src = src;
+        // Destination stays fixed for FIFO
+    }
+
+    /// Source address mask per channel.
+    /// DMA0: 27-bit (internal memory only), DMA1-3: 28-bit.
+    fn src_addr_mask(ch: usize) -> u32 {
+        if ch == 0 {
+            0x07FF_FFFF
+        } else {
+            0x0FFF_FFFF
+        }
+    }
+
+    /// Destination address mask per channel.
+    /// DMA0-2: 27-bit (internal memory only), DMA3: 28-bit.
+    fn dst_addr_mask(ch: usize) -> u32 {
+        if ch == 3 {
+            0x0FFF_FFFF
+        } else {
+            0x07FF_FFFF
+        }
     }
 
     pub(crate) fn irq_type(index: usize) -> InterruptType {

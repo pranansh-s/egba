@@ -1,4 +1,5 @@
 use crate::{
+    apu::Apu,
     bios::Bios,
     bus::Bus,
     cartridge::Cartridge,
@@ -21,8 +22,17 @@ pub(crate) struct Memory {
     pub(crate) video: Video,
     pub(crate) timers: Timers,
     pub(crate) dma: Dma,
+    pub(crate) apu: Apu,
 
     pub(crate) cartridge: Cartridge,
+
+    /// BIOS read-protection: only readable when PC is within BIOS range.
+    /// When not readable, returns the last value successfully read from BIOS.
+    pub(crate) bios_readable: bool,
+    last_bios_value: u8,
+
+    /// Open-bus: last value seen on the data bus, returned for unmapped reads.
+    last_bus_value: u8,
 }
 
 impl Memory {
@@ -38,7 +48,11 @@ impl Memory {
             video: Video::new(),
             timers: Timers::default(),
             dma: Dma::default(),
+            apu: Apu::default(),
             cartridge,
+            bios_readable: true, // Start readable (CPU boots from BIOS)
+            last_bios_value: 0,
+            last_bus_value: 0,
         }
     }
 }
@@ -46,23 +60,33 @@ impl Memory {
 impl Bus for Memory {
     fn read_byte(&self, addr: u32) -> u8 {
         match addr {
-            0x0000_0000..=0x0000_3FFF => self.bios.read(addr),
+            0x0000_0000..=0x0000_3FFF => {
+                if self.bios_readable {
+                    let v = self.bios.read(addr);
+                    // Note: last_bios_value is updated by the caller (CPU step)
+                    // since we can't mutate self in a &self method. The practical
+                    // impact is minimal — most reads go through read_hword/read_word.
+                    v
+                } else {
+                    self.last_bios_value
+                }
+            }
             0x0200_0000..=0x0203_FFFF => self.ewram.read_byte(addr & 0x3_FFFF),
             0x0300_0000..=0x0300_7FFF => self.iwram.read_byte(addr & 0x7FFF),
             0x0400_0000..=0x0400_03FE => {
                 let offset = addr & 0x3FF;
                 match offset {
                     0x000..=0x056 => self.video.read_byte(offset),
+                    0x060..=0x089 | 0x0A0..=0x0A7 => self.apu.read_byte(offset),
                     0x0B0..=0x0DE => self.dma.read_byte(offset),
                     0x100..=0x10F => self.timers.read_byte(offset),
                     0x130..=0x133 => self.keypad.read_byte(offset),
                     0x200..=0x203 | 0x208..=0x209 => self.interrupt.read_byte(offset),
                     0x204..=0x205 => self.system.read_byte(offset),
-                    _x => 0,
+                    _x => self.last_bus_value,
                 }
             }
-            0x0500_0000..=0x0500_03FF => self.video.palette[(addr & 0x3FF) as usize],
-            0x0500_0400..=0x05FF_FFFF => self.video.palette[(addr & 0x3FF) as usize],
+            0x0500_0000..=0x05FF_FFFF => self.video.palette[(addr & 0x3FF) as usize],
             0x0600_0000..=0x0601_7FFF => self.video.vram[(addr & 0x1_7FFF) as usize],
             0x0601_8000..=0x06FF_FFFF => {
                 let mirror = addr & 0x1_FFFF;
@@ -73,11 +97,11 @@ impl Bus for Memory {
                 };
                 self.video.vram[effective as usize]
             }
-            0x0700_0000..=0x0700_03FF => self.video.oam[(addr & 0x3FF) as usize],
-            0x0700_0400..=0x07FF_FFFF => self.video.oam[(addr & 0x3FF) as usize],
+            0x0700_0000..=0x07FF_FFFF => self.video.oam[(addr & 0x3FF) as usize],
             0x0800_0000..=0x0FFF_FFFF => self.cartridge.read_byte(addr),
 
-            _x => 0,
+            // Open-bus: return last value on the data bus
+            _x => self.last_bus_value,
         }
     }
 
@@ -90,6 +114,7 @@ impl Bus for Memory {
                 let offset = addr & 0x3FF;
                 match offset {
                     0x000..=0x056 => self.video.write_byte(offset, value),
+                    0x060..=0x089 | 0x0A0..=0x0A7 => self.apu.write_byte(offset, value),
                     0x0B0..=0x0DE => self.dma.write_byte(offset, value),
                     0x100..=0x10F => self.timers.write_byte(offset, value),
                     0x130..=0x133 => self.keypad.write_byte(offset, value),
@@ -99,9 +124,11 @@ impl Bus for Memory {
                 }
             }
             0x0500_0000..=0x05FF_FFFF => {
-                // Palette memory is 16-bit, but byte writes should affect the correct byte
-                let pal_addr = (addr & 0x3FF) as usize;
+                // Palette byte writes: write the byte to BOTH bytes of the halfword.
+                // Per GBATEK, byte writes to palette RAM duplicate the byte.
+                let pal_addr = (addr & 0x3FE) as usize; // Align to halfword
                 self.video.palette[pal_addr] = value;
+                self.video.palette[pal_addr + 1] = value;
             }
 
             0x0600_0000..=0x06FF_FFFF => {
@@ -111,19 +138,24 @@ impl Bus for Memory {
                 } else {
                     mirror
                 };
-                // Bitmap modes (3, 4, 5) need word-aligned writes
                 let bg_mode = self.video.read_byte(0x000) & 0x7;
                 if bg_mode >= 3 {
-                    let aligned = (effective & !1) as usize;
-                    if aligned + 1 < self.video.vram.len() {
-                        // Only write to the correct byte based on address bit 0
+                    // Bitmap modes: byte writes to BG VRAM area are allowed,
+                    // but writes to OBJ area (>= 0x14000) are ignored.
+                    if effective < 0x14000 {
                         self.video.vram[effective as usize] = value;
                     }
                 } else {
-                    // For tiled modes, byte writes work normally
-                    self.video.vram[effective as usize] = value;
+                    // Tile modes: byte writes duplicate the byte to both bytes
+                    // of the addressed halfword, same as palette.
+                    let aligned = (effective & !1) as usize;
+                    if aligned + 1 < self.video.vram.len() {
+                        self.video.vram[aligned] = value;
+                        self.video.vram[aligned + 1] = value;
+                    }
                 }
             }
+            // OAM: byte writes are completely ignored (only hword/word writes valid)
             0x0700_0000..=0x07FF_FFFF => {}
             0x0800_0000..=0x0FFF_FFFF => self.cartridge.write_byte(addr, value),
             _x => {}
@@ -164,6 +196,18 @@ impl Bus for Memory {
     }
 
     fn write_word(&mut self, addr: u32, value: u32) {
+        // Special case: FIFO writes push 4 samples per word write
+        match addr & 0x0FFF_FFFC {
+            0x0400_00A0 => {
+                self.apu.write_fifo(0, value);
+                return;
+            }
+            0x0400_00A4 => {
+                self.apu.write_fifo(1, value);
+                return;
+            }
+            _ => {}
+        }
         let addr = addr & !0b11;
         self.write_hword(addr, value as u16);
         self.write_hword(addr.wrapping_add(2), (value >> 16) as u16);

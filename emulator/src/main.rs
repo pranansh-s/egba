@@ -21,7 +21,7 @@ fn run(ui: &mut EgbaUI, gba: &mut GBA, debug: bool) {
 
     '_game: loop {
         let frame_start = Instant::now();
-
+        
         for event in event_pump.poll_iter() {
             match event {
                 Event::Quit { .. } => {
@@ -49,6 +49,9 @@ fn run(ui: &mut EgbaUI, gba: &mut GBA, debug: bool) {
         gba.run_frame();
 
         ui.render_frame(gba.framebuffer());
+
+        let audio_samples = gba.drain_audio();
+        ui.queue_audio(&audio_samples);
 
         let elapsed = frame_start.elapsed();
         if elapsed < FRAME_DURATION {
