@@ -146,14 +146,13 @@ impl EgbaUI {
             )
             .expect("Failed to create texture");
 
-        // PixelFormatEnum::RGB888 is 32-bit (4 bytes per pixel), SDL expects ABGR order in memory
         let pixel_data: Vec<u8> = framebuffer
             .iter()
             .flat_map(|&pixel| {
                 let r = ((pixel >> 16) & 0xFF) as u8;
                 let g = ((pixel >> 8) & 0xFF) as u8;
                 let b = (pixel & 0xFF) as u8;
-                [0u8, r, g, b] // Alpha padding byte first (little-endian ABGR)
+                [0u8, r, g, b]
             })
             .collect();
 
@@ -177,18 +176,14 @@ impl EgbaUI {
         self.canvas.clear();
     }
 
-    /// Queue audio samples to the SDL2 audio device.
-    /// Accepts a slice of (left, right) i16 sample pairs.
     pub fn queue_audio(&mut self, samples: &[(i16, i16)]) {
         if samples.is_empty() {
             return;
         }
-        // Interleave stereo samples into a flat i16 buffer
         let interleaved: Vec<i16> = samples
             .iter()
             .flat_map(|&(l, r)| [l, r])
             .collect();
-        // Ignore errors from queue_audio — audio glitches are non-fatal
         let _ = self.audio_device.queue_audio(&interleaved);
     }
 }

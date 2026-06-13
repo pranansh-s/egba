@@ -44,6 +44,7 @@ fn run(ui: &mut EgbaUI, gba: &mut GBA, debug: bool) {
 
         if debug {
             gba.show_stats();
+            std::thread::sleep(Duration::from_millis(300));
         }
 
         gba.run_frame();

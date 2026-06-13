@@ -16,7 +16,6 @@ impl CPU {
     pub(crate) fn thumb_opcodes(&mut self, bus: &mut impl Bus, inst: u16) {
         #[bitmatch]
         match inst.bit_range(0..16) {
-            //1000_1000_0001_1010
             "0001_1???_????_????" => self.thumb_format2(
                 inst.bit(10),
                 inst.bit(9),
@@ -172,7 +171,6 @@ impl CPU {
             0b1011 => self.ADD(op, op2, true),
             0b1100 => self.ORR(op, op2),
             0b1101 => {
-                // MUL: carry flag is destroyed on ARM7TDMI
                 self.cpsr.c_condition_bit = false;
                 op.wrapping_mul(op2)
             }
@@ -352,8 +350,6 @@ impl CPU {
             }
         }
 
-        // For LDM, if rb is in the register list, the loaded value takes priority
-        // and writeback is skipped. For STM, always write back.
         if !l || !rb_in_list {
             self.reg[rb] = addr;
         }

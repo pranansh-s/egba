@@ -26,12 +26,9 @@ pub(crate) struct Memory {
 
     pub(crate) cartridge: Cartridge,
 
-    /// BIOS read-protection: only readable when PC is within BIOS range.
-    /// When not readable, returns the last value successfully read from BIOS.
     pub(crate) bios_readable: bool,
     last_bios_value: u8,
 
-    /// Open-bus: last value seen on the data bus, returned for unmapped reads.
     last_bus_value: u8,
 }
 
@@ -50,7 +47,7 @@ impl Memory {
             dma: Dma::default(),
             apu: Apu::default(),
             cartridge,
-            bios_readable: true, // Start readable (CPU boots from BIOS)
+            bios_readable: true,
             last_bios_value: 0,
             last_bus_value: 0,
         }
@@ -63,9 +60,6 @@ impl Bus for Memory {
             0x0000_0000..=0x0000_3FFF => {
                 if self.bios_readable {
                     let v = self.bios.read(addr);
-                    // Note: last_bios_value is updated by the caller (CPU step)
-                    // since we can't mutate self in a &self method. The practical
-                    // impact is minimal — most reads go through read_hword/read_word.
                     v
                 } else {
                     self.last_bios_value
@@ -100,7 +94,6 @@ impl Bus for Memory {
             0x0700_0000..=0x07FF_FFFF => self.video.oam[(addr & 0x3FF) as usize],
             0x0800_0000..=0x0FFF_FFFF => self.cartridge.read_byte(addr),
 
-            // Open-bus: return last value on the data bus
             _x => self.last_bus_value,
         }
     }
@@ -124,9 +117,7 @@ impl Bus for Memory {
                 }
             }
             0x0500_0000..=0x05FF_FFFF => {
-                // Palette byte writes: write the byte to BOTH bytes of the halfword.
-                // Per GBATEK, byte writes to palette RAM duplicate the byte.
-                let pal_addr = (addr & 0x3FE) as usize; // Align to halfword
+                let pal_addr = (addr & 0x3FE) as usize;
                 self.video.palette[pal_addr] = value;
                 self.video.palette[pal_addr + 1] = value;
             }
@@ -140,14 +131,10 @@ impl Bus for Memory {
                 };
                 let bg_mode = self.video.read_byte(0x000) & 0x7;
                 if bg_mode >= 3 {
-                    // Bitmap modes: byte writes to BG VRAM area are allowed,
-                    // but writes to OBJ area (>= 0x14000) are ignored.
                     if effective < 0x14000 {
                         self.video.vram[effective as usize] = value;
                     }
                 } else {
-                    // Tile modes: byte writes duplicate the byte to both bytes
-                    // of the addressed halfword, same as palette.
                     let aligned = (effective & !1) as usize;
                     if aligned + 1 < self.video.vram.len() {
                         self.video.vram[aligned] = value;
@@ -155,7 +142,6 @@ impl Bus for Memory {
                     }
                 }
             }
-            // OAM: byte writes are completely ignored (only hword/word writes valid)
             0x0700_0000..=0x07FF_FFFF => {}
             0x0800_0000..=0x0FFF_FFFF => self.cartridge.write_byte(addr, value),
             _x => {}
@@ -196,7 +182,6 @@ impl Bus for Memory {
     }
 
     fn write_word(&mut self, addr: u32, value: u32) {
-        // Special case: FIFO writes push 4 samples per word write
         match addr & 0x0FFF_FFFC {
             0x0400_00A0 => {
                 self.apu.write_fifo(0, value);

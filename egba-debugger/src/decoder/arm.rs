@@ -9,17 +9,14 @@ use crate::{bit_check, format_reg};
 pub fn arm_decode(instr: u32) -> String {
     #[bitmatch]
     match bit_r!(instr, 0..28) {
-        //BX 
         "0001_0010_1111_1111_1111_0001_????" => {
             let rn = &format_reg!(instr, 0..4);
             format!("BX {rn}")
         },
-        //B_BL
         "101?_????_????_????_????_????_????" => {
             let l = bit_check!(instr, 24, "L", "");
             format!("B{l} {}", ((bit_r!(instr, 0..24) as i32) << 8) >> 6)
         },
-        //MUL_MLA
         "0000_00??_????_????_????_1001_????" => {
             let opcode = bit_check!(instr, 21, "MLA", "MUL");
             let s = bit_check!(instr, 20, "S", "");
@@ -29,7 +26,6 @@ pub fn arm_decode(instr: u32) -> String {
             let rn = bit_check!(instr, 21, &format!(", R{:02}", bit_r!(instr, 12..16)), "");
             format!("{opcode}{s} {rd}, {rm}, {rs}{rn}")
         },
-        //UMULL_UMLAL_SMULL_SMLAL
         "0000_1???_????_????_????_1001_????" => {
             let opcode = match(instr.bit(22), instr.bit(21)) {
                 (false, false) => "UMULL",
@@ -44,13 +40,11 @@ pub fn arm_decode(instr: u32) -> String {
             let rs = &format_reg!(instr, 8..12);
             format!("{opcode}{s} {rd_lo}, {rd_hi}, {rm}, {rs}")
         },
-        //MRS
         "0001_0?00_1111_????_0000_0000_0000" => {
             let rd = &format_reg!(instr, 12..16);
             let psr = bit_check!(instr, 22, "SPSR", "CPSR");
             format!("MRS {rd}, {psr}")
         },
-        //MSR
         "00?1_0?10_100?_1111_????_????_????" => {
             let psr = bit_check!(instr, 22, "SPSR", "CPSR");
             let op = if instr.bit(25) {
@@ -64,7 +58,6 @@ pub fn arm_decode(instr: u32) -> String {
             let f = bit_check!(instr, 16, "", "_flg");
             format!("MSR {psr}{f}, {op}")
         },
-        //LDM_STM
         "100?_????_????_????_????_????_????" => {
             let opcode = bit_check!(instr, 20, "LDM", "STM");
             let p = bit_check!(instr, 24, "B", "A");
@@ -74,7 +67,6 @@ pub fn arm_decode(instr: u32) -> String {
             let rlist = (0..16).filter(|&i| bit_r!(instr, 0..16) & (1 << i) != 0).map(|i| format!("R{:02}", i)).collect::<Vec<_>>().join(", ");
             format!("{opcode}{u}{p} R{:02}{w}, {{{rlist}}}{s}", bit_r!(instr, 16..20))
         },
-        //SWP
         "0001_0?00_????_????_0000_1001_????" => {
             let b = bit_check!(instr, 22, "B", "");
             let rd = &format_reg!(instr, 12..16);
@@ -82,7 +74,6 @@ pub fn arm_decode(instr: u32) -> String {
             let rn = &format_reg!(instr, 16..20);
             format!("SWP{b} {rd}, {rm}, [{rn}]")
         },
-        //LDRH_LDRSH_LDRSB_STRH
         "000?_????_????_????_????_1??1_????" => {
             let opcode = bit_check!(instr, 20, "LDR", "STM");
             let sh = match(instr.bit(6), instr.bit(5)) {
@@ -101,7 +92,6 @@ pub fn arm_decode(instr: u32) -> String {
             let pre = bit_check!(instr, 24, "]", "");
             format!("{opcode}{sh} {rd}, [{rn}{post}{u}{exp}{pre}{w}")
         },
-        //Data Processing
         "00??_????_????_????_????_????_????" => {
             let opcode_bits = bit_r!(instr, 21..25);
             let opcode = match opcode_bits {
@@ -141,7 +131,6 @@ pub fn arm_decode(instr: u32) -> String {
             let operands = [rd, rn, op2].iter().filter(|s| !s.is_empty()).cloned().collect::<Vec<_>>().join(", ");
             format!("{opcode}{s} {operands}")
         },
-        //LDR_STR
         "01??_????_????_????_????_????_????" => {
             let opcode = bit_check!(instr, 20, "LDR", "STR");
             let u = bit_check!(instr, 23, "+", "-");
@@ -164,7 +153,6 @@ pub fn arm_decode(instr: u32) -> String {
             let pre = bit_check!(instr, 24, "]", "");
             format!("{opcode}{b}{t} {rd}, [{rn}{post}{u}{exp}{pre}{w}")
         },
-        //SWI
         "1111_????_????_????_????_????_????" => "SWI".to_string(),
         _ => "????".to_string()
     }

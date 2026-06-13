@@ -53,12 +53,10 @@ impl Bus for InterruptControl {
                 self.enable.set_bit_range(8..16, value as u16);
             }
             0x202 => {
-                self.request
-                    .set_bit_range(0..8, self.request & !(value as u16));
+                self.request &= !(value as u16);
             }
             0x203 => {
-                self.request
-                    .set_bit_range(8..16, self.request & !(value as u16));
+                self.request &= !((value as u16) << 8);
             }
             _ => {}
         }
@@ -66,9 +64,6 @@ impl Bus for InterruptControl {
 }
 
 impl InterruptControl {
-    /// Check pending interrupts and deliver IRQ if enabled.
-    /// Returns `true` if an IRQ exception was accepted and the caller
-    /// must flush the CPU pipeline.
     pub(crate) fn step(&mut self, cpu: &mut CPU, system: &mut SystemControl) -> bool {
         if (self.enable & self.request) == 0 {
             return false;
@@ -106,7 +101,7 @@ pub(crate) struct SystemControl {
 
 impl SystemControl {
     pub(crate) fn step(&mut self) {
-        //TODO: actual cycle counting with ws and prefetch behavior
+        // TODO: actual cycle counting with ws and prefetch behavior
     }
 
     pub(crate) fn update_power(&mut self, power: PowerMode) {

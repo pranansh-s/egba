@@ -57,25 +57,19 @@ impl Sprite {
     }
 
     pub fn dimensions(&self) -> (i16, i16) {
-        // Shape: 0=Square, 1=Horizontal, 2=Vertical, 3=Prohibited
-        // Size: 0=8px, 1=16px, 2=32px, 3=64px (base unit)
         match (self.shape, self.size) {
-            // Square sprites
             (0, 0) => (8, 8),
             (0, 1) => (16, 16),
             (0, 2) => (32, 32),
             (0, 3) => (64, 64),
-            // Horizontal sprites
             (1, 0) => (16, 8),
             (1, 1) => (32, 8),
             (1, 2) => (32, 16),
             (1, 3) => (64, 32),
-            // Vertical sprites
             (2, 0) => (8, 16),
             (2, 1) => (8, 32),
             (2, 2) => (16, 32),
             (2, 3) => (32, 64),
-            // Prohibited shape - treat as square
             (3, 0) => (8, 8),
             (3, 1) => (16, 16),
             (3, 2) => (32, 32),
@@ -84,7 +78,6 @@ impl Sprite {
         }
     }
 
-    /// Number of tiles in 1D mapping (8x8 tiles)
     #[allow(dead_code)]
     pub fn num_tiles_1d(&self) -> u16 {
         let (w, h) = self.dimensions();

@@ -40,9 +40,6 @@ pub(crate) struct Video {
     bgref_x: [u32; 2],
     bgref_y: [u32; 2],
     bgaffine: [[u16; 4]; 2],
-    /// Internal affine reference point latches (28-bit signed fixed-point 20.8).
-    /// These are copied from bgref_x/y on VBlank and on register write,
-    /// then advanced each scanline by PB (X) and PD (Y).
     pub(crate) internal_ref_x: [i32; 2],
     pub(crate) internal_ref_y: [i32; 2],
     win_h: [u16; 2],
@@ -100,7 +97,6 @@ impl Video {
             if self.vcount < HEIGHT as u16 {
                 self.render_scanline();
 
-                // Advance affine reference points by PB/PD after each visible scanline
                 for i in 0..2 {
                     let pb = self.bgaffine[i][1] as i16 as i32;
                     let pd = self.bgaffine[i][3] as i16 as i32;
@@ -128,7 +124,6 @@ impl Video {
                 self.dispstat.set_bit(0, true);
                 event = VideoEvent::VBlank;
 
-                // Latch affine reference points from registers on VBlank
                 for i in 0..2 {
                     self.internal_ref_x[i] = self.sign_extend_28(self.bgref_x[i]);
                     self.internal_ref_y[i] = self.sign_extend_28(self.bgref_y[i]);
@@ -144,7 +139,6 @@ impl Video {
                 self.dispstat.set_bit(0, false);
             }
 
-            // LYC match: triggered when VCOUNT equals LYC value
             let lyc = self.dispstat.bit_range(8..16);
             let match_flag = self.vcount == lyc;
             self.dispstat.set_bit(2, match_flag);
@@ -187,7 +181,6 @@ impl Video {
         (r << 16) | (g << 8) | b
     }
 
-    /// Sign-extend a 28-bit fixed-point value to i32
     pub(crate) fn sign_extend_28(&self, val: u32) -> i32 {
         if val & (1 << 27) != 0 {
             (val | 0xF000_0000) as i32

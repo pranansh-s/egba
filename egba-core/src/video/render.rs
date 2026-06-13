@@ -5,7 +5,6 @@ use crate::video::sprite::Sprite;
 use super::{Video, HEIGHT, WIDTH};
 use bit::BitIndex;
 
-/// Window mask bits: which layers are visible at a given pixel
 #[allow(dead_code)]
 const WIN_BG0: u8 = 1 << 0;
 #[allow(dead_code)]
@@ -16,17 +15,13 @@ const WIN_BG2: u8 = 1 << 2;
 const WIN_BG3: u8 = 1 << 3;
 const WIN_OBJ: u8 = 1 << 4;
 const WIN_SFX: u8 = 1 << 5;
-/// All layers + effects enabled (used when windows are disabled)
 const WIN_ALL: u8 = 0x3F;
 
-/// Per-pixel layer info for compositing and blending
 #[derive(Clone, Copy)]
 struct PixelInfo {
     color: u32,
     priority: u8,
-    /// Which layer produced this pixel (0-3 for BG, 4 for OBJ, 5 for backdrop)
     layer: u8,
-    /// Is this pixel semi-transparent (OBJ mode 1)?
     semi_transparent: bool,
 }
 
@@ -55,7 +50,6 @@ impl Video {
             return;
         }
 
-        // Two-layer compositing buffer: top and second pixel per column
         let backdrop = self.rgb555_to_rgb888(self.palette_read_u16(0));
         let backdrop_pixel = PixelInfo {
             color: backdrop,
@@ -66,49 +60,41 @@ impl Video {
         let mut top = [backdrop_pixel; WIDTH];
         let mut second = [backdrop_pixel; WIDTH];
 
-        // Compute OBJ window mask (mode-2 sprites) before window evaluation
         let mut objwin_mask = [false; WIDTH];
         let any_window_enabled = self.win0_enabled() || self.win1_enabled() || self.objwin_enabled();
         if any_window_enabled && self.objwin_enabled() && self.dispcnt.bit(12) {
             self.render_objwin_mask(y, &mut objwin_mask);
         }
 
-        // Compute per-pixel window mask (which layers/effects are enabled at each pixel)
         let win_mask = self.compute_window_mask(y, &objwin_mask);
 
         let mode = self.bg_mode();
 
         match mode {
             0 => {
-                // Mode 0: 4 text BGs
                 self.render_tiled_bgs(y, &mut top, &mut second, &[0, 1, 2, 3], &[false; 4], &win_mask);
             }
             1 => {
-                // Mode 1: BG0, BG1 text; BG2 affine
                 self.render_tiled_bgs(y, &mut top, &mut second, &[0, 1, 2], &[false, false, true], &win_mask);
             }
             2 => {
-                // Mode 2: BG2, BG3 affine
                 self.render_tiled_bgs(y, &mut top, &mut second, &[2, 3], &[true, true], &win_mask);
             }
-            3 => self.render_mode3(y, &mut top),
-            4 => self.render_mode4(y, &mut top),
-            5 => self.render_mode5(y, &mut top),
+            3 => self.render_mode3(y, &mut top, &win_mask),
+            4 => self.render_mode4(y, &mut top, &win_mask),
+            5 => self.render_mode5(y, &mut top, &win_mask),
             _ => {}
         }
 
-        // Render sprites on top (all modes can have sprites)
         if self.dispcnt.bit(12) {
             for prio in (0..=3).rev() {
                 self.render_sprites_layered(y, &mut top, &mut second, prio, &win_mask);
             }
         }
 
-        // Apply color special effects and write to framebuffer
         self.apply_blending(y, &top, &second, &win_mask);
     }
 
-    /// Render tiled backgrounds (both text and affine) with priority compositing
     fn render_tiled_bgs(
         &self,
         y: usize,
@@ -118,7 +104,6 @@ impl Video {
         is_affine: &[bool],
         win_mask: &[u8; WIDTH],
     ) {
-        // Render from lowest to highest priority so higher-priority layers overwrite
         for prio in (0..=3u8).rev() {
             for (idx, &bg) in bgs.iter().enumerate().rev() {
                 if !self.dispcnt.bit(8 + bg) {
@@ -138,24 +123,30 @@ impl Video {
         }
     }
 
-    fn render_mode3(&self, y: usize, top: &mut [PixelInfo; WIDTH]) {
+    fn render_mode3(&self, y: usize, top: &mut [PixelInfo; WIDTH], win_mask: &[u8; WIDTH]) {
         for x in 0..WIDTH {
+            if win_mask[x] & WIN_BG2 == 0 {
+                continue;
+            }
             let offset = (y * WIDTH + x) * 2;
             if offset + 1 < self.vram.len() {
                 let color = u16::from_le_bytes([self.vram[offset], self.vram[offset + 1]]);
                 top[x] = PixelInfo {
                     color: self.rgb555_to_rgb888(color),
                     priority: 0,
-                    layer: 2, // BG2 in bitmap modes
+                    layer: 2,
                     semi_transparent: false,
                 };
             }
         }
     }
 
-    fn render_mode4(&self, y: usize, top: &mut [PixelInfo; WIDTH]) {
+    fn render_mode4(&self, y: usize, top: &mut [PixelInfo; WIDTH], win_mask: &[u8; WIDTH]) {
         let base = if self.frame_select() { 0xA000 } else { 0 };
         for x in 0..WIDTH {
+            if win_mask[x] & WIN_BG2 == 0 {
+                continue;
+            }
             let idx = self.vram[base + y * WIDTH + x] as usize;
             if idx != 0 {
                 let color = self.palette_read_u16(idx * 2);
@@ -169,13 +160,16 @@ impl Video {
         }
     }
 
-    fn render_mode5(&self, y: usize, top: &mut [PixelInfo; WIDTH]) {
+    fn render_mode5(&self, y: usize, top: &mut [PixelInfo; WIDTH], win_mask: &[u8; WIDTH]) {
         let base = if self.frame_select() { 0xA000 } else { 0 };
         if y >= 128 {
             return;
         }
         for x in 0..WIDTH {
             if x >= 160 {
+                continue;
+            }
+            if win_mask[x] & WIN_BG2 == 0 {
                 continue;
             }
             let offset = base + (y * 160 + x) * 2;
@@ -226,7 +220,6 @@ impl Video {
 
         let bg_win_bit = 1u8 << bg;
         for x in 0..WIDTH {
-            // Window check: skip this pixel if the BG is masked out
             if win_mask[x] & bg_win_bit == 0 {
                 continue;
             }
@@ -302,8 +295,6 @@ impl Video {
                 semi_transparent: false,
             };
 
-            // Compositing: if this pixel has higher or equal priority than the current top,
-            // push top to second and replace
             if prio <= top[x].priority {
                 second[x] = top[x];
                 top[x] = pixel;
@@ -313,7 +304,6 @@ impl Video {
         }
     }
 
-    /// Render an affine (rotation/scaling) background
     fn render_affine_bg(
         &self,
         bg: usize,
@@ -328,7 +318,6 @@ impl Video {
         let screen_base = ((bgcnt >> 8) & 0x1F) as usize * 0x800;
         let wrap = bgcnt.bit(13);
 
-        // Affine BG sizes: 0=128, 1=256, 2=512, 3=1024
         let size = match (bgcnt >> 14) & 3 {
             0 => 128usize,
             1 => 256,
@@ -338,25 +327,19 @@ impl Video {
         };
         let tiles_per_row = size / 8;
 
-        // Use internal reference points and affine parameters
-        // BG2 uses index 0, BG3 uses index 1
         let affine_idx = bg - 2;
 
-        // The reference points are 28-bit signed fixed-point (20.8)
         let ref_x = self.internal_ref_x[affine_idx];
         let ref_y = self.internal_ref_y[affine_idx];
 
-        // PA, PB, PC, PD are 16-bit signed fixed-point (8.8)
         let pa = self.bgaffine[affine_idx][0] as i16 as i32;
         let pc = self.bgaffine[affine_idx][2] as i16 as i32;
 
         let bg_win_bit = 1u8 << bg;
         for x in 0..WIDTH {
-            // Window check: skip this pixel if the BG is masked out
             if win_mask[x] & bg_win_bit == 0 {
                 continue;
             }
-            // Texture coordinates from reference point + PA * x (PB was already added per-scanline)
             let tex_x = (ref_x + pa * (x as i32)) >> 8;
             let tex_y = (ref_y + pc * (x as i32)) >> 8;
 
@@ -377,7 +360,6 @@ impl Video {
             let pixel_x = tx % 8;
             let pixel_y = ty % 8;
 
-            // Affine BGs always use 8bpp, single screenblock map (1 byte per tile entry)
             let map_addr = screen_base + tile_y * tiles_per_row + tile_x;
             if map_addr >= self.vram.len() {
                 continue;
@@ -411,7 +393,6 @@ impl Video {
         }
     }
 
-    /// Render sprites with layered compositing
     fn render_sprites_layered(
         &self,
         y: usize,
@@ -437,7 +418,6 @@ impl Video {
                 continue;
             }
 
-            // OBJ Window mode sprites (mode 2) are rendered separately in render_objwin_mask
             if sprite.mode == 2 {
                 continue;
             }
@@ -445,7 +425,6 @@ impl Video {
             let is_semi_transparent = sprite.mode == 1;
             let (orig_w, orig_h) = sprite.dimensions();
 
-            // For affine double-size, the bounding box is doubled but texture dims stay the same
             let (bound_w, bound_h) = if sprite.affine && sprite.double_or_disable {
                 (orig_w * 2, orig_h * 2)
             } else {
@@ -515,7 +494,6 @@ impl Video {
             if screen_x < 0 || screen_x >= WIDTH as i16 {
                 continue;
             }
-            // Window check: skip this pixel if OBJ layer is masked out
             if win_mask[screen_x as usize] & WIN_OBJ == 0 {
                 continue;
             }
@@ -527,7 +505,7 @@ impl Video {
                 let pixel = PixelInfo {
                     color,
                     priority: prio,
-                    layer: 4, // OBJ layer
+                    layer: 4,
                     semi_transparent,
                 };
                 if prio <= top[sx].priority {
@@ -555,16 +533,12 @@ impl Video {
         semi_transparent: bool,
         win_mask: &[u8; WIDTH],
     ) {
-        // Affine sprite parameters are stored interleaved in OAM:
-        // OAM entry N (8 bytes each): bytes 6-7 contain one affine parameter
-        // Group G has PA at entry G*4+0 byte 6, PB at G*4+1 byte 6, etc.
         let group = sprite.affine_param as usize;
         let pa = self.read_oam_affine_param(group, 0);
         let pb = self.read_oam_affine_param(group, 1);
         let pc = self.read_oam_affine_param(group, 2);
         let pd = self.read_oam_affine_param(group, 3);
 
-        // Center coordinates use the original (un-doubled) dimensions
         let center_x = bound_w / 2;
         let center_y = bound_h / 2;
 
@@ -578,14 +552,12 @@ impl Video {
             if screen_x < 0 || screen_x >= WIDTH as i16 {
                 continue;
             }
-            // Window check: skip this pixel if OBJ layer is masked out
             if win_mask[screen_x as usize] & WIN_OBJ == 0 {
                 continue;
             }
 
             let dx = lx - center_x;
 
-            // Apply affine transformation to get texture coordinates
             let tex_x = ((dx as i32 * pa as i32 + dy as i32 * pb as i32) >> 8) + half_orig_w as i32;
             let tex_y = ((dx as i32 * pc as i32 + dy as i32 * pd as i32) >> 8) + half_orig_h as i32;
 
@@ -618,22 +590,19 @@ impl Video {
         }
     }
 
-    /// Read one of the 4 affine parameters (PA/PB/PC/PD) for a given affine group.
-    /// Parameters are stored at OAM[group*32 + param*8 + 6] (interleaved in OAM entries).
     fn read_oam_affine_param(&self, group: usize, param: usize) -> i16 {
         let offset = group * 32 + param * 8 + 6;
         if offset + 1 < self.oam.len() {
             i16::from_le_bytes([self.oam[offset], self.oam[offset + 1]])
         } else {
             if param == 0 || param == 3 {
-                256 // Identity: PA=PD=1.0 in 8.8 fixed point
+                256
             } else {
-                0 // PB=PC=0 (no rotation/shear)
+                0
             }
         }
     }
 
-    /// Apply color special effects (blending) and write to framebuffer
     fn apply_blending(
         &mut self,
         y: usize,
@@ -642,7 +611,7 @@ impl Video {
         win_mask: &[u8; WIDTH],
     ) {
         let blend_mode = (self.bldcnt >> 6) & 3;
-        let first_targets = self.bldcnt & 0x3F; // bits 0-5: BG0-3, OBJ, BD
+        let first_targets = self.bldcnt & 0x3F;
         let second_targets = (self.bldcnt >> 8) & 0x3F;
 
         let eva = (self.bldalpha & 0x1F).min(16) as u32;
@@ -653,14 +622,12 @@ impl Video {
             let tp = top[x];
             let sp = second[x];
 
-            // Window mask: only apply special effects if WIN_SFX is set for this pixel
             let sfx_enabled = win_mask[x] & WIN_SFX != 0;
 
             let is_first = self.layer_in_target(tp.layer, first_targets);
             let is_second = self.layer_in_target(sp.layer, second_targets);
 
             let final_color = if sfx_enabled && tp.semi_transparent && is_second {
-                // Semi-transparent OBJ always uses alpha blend if second target exists
                 self.alpha_blend(tp.color, sp.color, eva, evb)
             } else if sfx_enabled && is_first {
                 match blend_mode {
@@ -680,8 +647,8 @@ impl Video {
     fn layer_in_target(&self, layer: u8, targets: u16) -> bool {
         match layer {
             0..=3 => targets.bit(layer as usize),
-            4 => targets.bit(4), // OBJ
-            5 => targets.bit(5), // Backdrop
+            4 => targets.bit(4),
+            5 => targets.bit(5),
             _ => false,
         }
     }
@@ -783,27 +750,19 @@ impl Video {
     }
 }
 
-// Window mask computation
 impl Video {
-    /// Check if WIN0 is enabled (DISPCNT bit 13)
     fn win0_enabled(&self) -> bool {
         self.dispcnt.bit(13)
     }
 
-    /// Check if WIN1 is enabled (DISPCNT bit 14)
     fn win1_enabled(&self) -> bool {
         self.dispcnt.bit(14)
     }
 
-    /// Check if OBJ Window is enabled (DISPCNT bit 15)
     fn objwin_enabled(&self) -> bool {
         self.dispcnt.bit(15)
     }
 
-    /// Compute per-pixel window mask for the current scanline.
-    /// Returns a [u8; 240] where each byte contains the layer-enable bits
-    /// for that pixel (WIN_BG0..WIN_SFX).
-    /// If no windows are enabled, all pixels get WIN_ALL (everything enabled).
     fn compute_window_mask(&self, y: usize, objwin_mask: &[bool; WIDTH]) -> [u8; WIDTH] {
         let win0 = self.win0_enabled();
         let win1 = self.win1_enabled();
@@ -813,23 +772,19 @@ impl Video {
             return [WIN_ALL; WIDTH];
         }
 
-        // Pre-extract window enable bits
         let win0_enables = (self.winin & 0x3F) as u8;
         let win1_enables = ((self.winin >> 8) & 0x3F) as u8;
         let outside_enables = (self.winout & 0x3F) as u8;
         let objwin_enables = ((self.winout >> 8) & 0x3F) as u8;
 
-        // WIN0 vertical bounds
         let win0_y1 = (self.win_v[0] >> 8) as usize;
         let win0_y2 = (self.win_v[0] & 0xFF) as usize;
         let win0_in_y = if win0_y1 <= win0_y2 {
             y >= win0_y1 && y < win0_y2
         } else {
-            // Wraps around: y >= y1 OR y < y2
             y >= win0_y1 || y < win0_y2
         };
 
-        // WIN1 vertical bounds
         let win1_y1 = (self.win_v[1] >> 8) as usize;
         let win1_y2 = (self.win_v[1] & 0xFF) as usize;
         let win1_in_y = if win1_y1 <= win1_y2 {
@@ -838,18 +793,15 @@ impl Video {
             y >= win1_y1 || y < win1_y2
         };
 
-        // WIN0 horizontal bounds
         let win0_x1 = (self.win_h[0] >> 8) as usize;
         let win0_x2 = (self.win_h[0] & 0xFF) as usize;
 
-        // WIN1 horizontal bounds
         let win1_x1 = (self.win_h[1] >> 8) as usize;
         let win1_x2 = (self.win_h[1] & 0xFF) as usize;
 
         let mut mask = [0u8; WIDTH];
 
         for x in 0..WIDTH {
-            // Priority order: WIN0 > WIN1 > OBJWIN > Outside
             if win0 && win0_in_y {
                 let in_x = if win0_x1 <= win0_x2 {
                     x >= win0_x1 && x < win0_x2
@@ -885,8 +837,6 @@ impl Video {
         mask
     }
 
-    /// Render OBJ Window sprites (mode 2) into a boolean mask.
-    /// A pixel is true if any mode-2 sprite covers it (non-transparent pixel).
     fn render_objwin_mask(&self, y: usize, mask: &mut [bool; WIDTH]) {
         let is_1d_mapping = self.dispcnt.bit(6);
 
@@ -898,7 +848,6 @@ impl Video {
 
             let sprite = Sprite::new(attr0, attr1, attr2);
 
-            // Only process mode-2 (OBJ Window) sprites
             if sprite.mode != 2 {
                 continue;
             }
@@ -923,7 +872,6 @@ impl Video {
             }
 
             if sprite.affine {
-                // Affine OBJ window rendering
                 let group = sprite.affine_param as usize;
                 let pa = self.read_oam_affine_param(group, 0);
                 let pb = self.read_oam_affine_param(group, 1);
@@ -956,7 +904,6 @@ impl Video {
                     });
                 }
             } else {
-                // Normal OBJ window rendering
                 let local_y = if sprite.v_flip { orig_h - 1 - ly } else { ly };
 
                 for lx in 0..orig_w {
@@ -976,9 +923,6 @@ impl Video {
     }
 }
 
-// Keep the old render_sprites method signature for backward compatibility
-// (the old API is no longer called from render_scanline, but keeping it
-// avoids breaking any external references)
 impl Video {
     #[allow(dead_code)]
     fn render_sprites(&self, y: usize, line: &mut [(u32, u8)], prio: u8) {
@@ -1017,7 +961,6 @@ impl Video {
                 continue;
             }
 
-            // Normal sprite rendering for backward compat
             let local_y = if sprite.v_flip { h - 1 - ly } else { ly };
             for lx in 0..w {
                 let screen_x = sprite.x + lx;

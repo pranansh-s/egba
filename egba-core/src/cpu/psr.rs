@@ -53,8 +53,6 @@ impl From<u32> for OperatingMode {
             0b10111 => OperatingMode::abt,
             0b11011 => OperatingMode::und,
             0b11111 => OperatingMode::sys,
-            // Invalid mode bits can occur from corrupted SPSR restores;
-            // fall back to system mode rather than crashing.
             _ => OperatingMode::sys,
         }
     }

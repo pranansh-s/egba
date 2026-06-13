@@ -55,7 +55,6 @@ impl Timers {
                     self.timers[i].counter = self.timers[i].reload;
                     overflow_flags |= 1 << i;
 
-                    // Cascade to next timer
                     if i < 3 {
                         self.cascade_overflow(i + 1, &mut overflow_flags);
                     }
@@ -111,10 +110,8 @@ impl Bus for Timers {
         }
 
         match reg_offset {
-            // TMxCNT_L: read returns current counter
             0 => self.timers[timer_idx].counter as u8,
             1 => (self.timers[timer_idx].counter >> 8) as u8,
-            // TMxCNT_H: read returns control
             2 => self.timers[timer_idx].control as u8,
             3 => (self.timers[timer_idx].control >> 8) as u8,
             _ => 0,

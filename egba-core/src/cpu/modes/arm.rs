@@ -150,8 +150,6 @@ impl CPU {
         } else {
             self.reg[bit_r!(op, 0..4)]
         };
-        // f = "flags only" (bit16 was clear, meaning only flag bits writable)
-        // !f = "full" (bit16 was set, meaning control bits also writable)
         let mask = if f { 0xF000_0000 } else { 0xF00000DF };
 
         if p {
@@ -416,7 +414,6 @@ impl CPU {
 
         if s {
             self.set_NZ(prod);
-            // ARM7TDMI: carry is destroyed by multiply
             self.cpsr.c_condition_bit = false;
         }
     }
