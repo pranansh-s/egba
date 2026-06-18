@@ -146,7 +146,9 @@ impl CPU {
 
     fn arm_MSR(&mut self, i: bool, p: bool, f: bool, op: usize) {
         let bits = if i {
-            self.ROR(bit_r!(op, 0..8) as u32, 2 * bit_r!(op, 8..12) as u8, false)
+            let imm = bit_r!(op, 0..8) as u32;
+            let rotate = 2 * bit_r!(op, 8..12) as u32;
+            imm.rotate_right(rotate)
         } else {
             self.reg[bit_r!(op, 0..4)]
         };
@@ -173,8 +175,12 @@ impl CPU {
         let update_cpsr = s && rd != PC_INDEX;
         let op2 = if i {
             let imm = bit_r!(operand2, 0..8) as u32;
-            let rotate = 2 * bit_r!(operand2, 8..12) as u8;
-            self.ROR(imm, rotate, update_cpsr)
+            let rotate = 2 * bit_r!(operand2, 8..12) as u32;
+            let rotated = imm.rotate_right(rotate);
+            if update_cpsr && rotate != 0 {
+                self.cpsr.c_condition_bit = rotated & 0x8000_0000 != 0;
+            }
+            rotated
         } else {
             self.shift_by_reg(operand2, update_cpsr)
         };
@@ -256,7 +262,7 @@ impl CPU {
             self.reg[rd] = if b {
                 bus.read_byte(addr) as u32
             } else {
-                bus.read_word(addr)
+                bus.read_word(addr).rotate_right(8 * (addr & 0b11))
             };
 
             if rd == PC_INDEX {

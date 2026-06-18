@@ -5,4 +5,5 @@
 /tests/roms/
 
 **/CLAUDE.md
-**/GAP_ANALYSIS.md
+**/.claude/
+**/docs/

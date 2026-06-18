@@ -6,6 +6,8 @@ pub(crate) trait Bus {
     fn read_byte(&self, addr: u32) -> u8;
     fn write_byte(&mut self, _addr: u32, _value: u8) {}
 
+    fn tick(&mut self, _n: u32) {}
+
     fn read_hword(&self, addr: u32) -> u16 {
         let addr = addr & !0b1;
         u16::from_le_bytes([self.read_byte(addr), self.read_byte(addr.wrapping_add(1))])

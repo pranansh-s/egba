@@ -90,18 +90,23 @@ impl CPU {
     pub fn shift_by_reg(&mut self, inst: usize, s: bool) -> u32 {
         let rm = bit_r!(inst, 0..4);
         let shift_type = bit_r!(inst, 5..7);
-        let rotate = if inst.bit(4) {
+        let by_reg = inst.bit(4);
+        let rotate = if by_reg {
             let rs = bit_r!(inst, 8..12);
             bit_r!(self.reg[rs], 0..8)
         } else {
             bit_r!(inst, 7..12)
         } as u8;
 
-        let val = if rm == PC_INDEX && inst.bit(4) {
+        let val = if rm == PC_INDEX && by_reg {
             self.reg[rm].wrapping_add(4)
         } else {
             self.reg[rm]
         };
+
+        if by_reg && rotate == 0 {
+            return val;
+        }
 
         match ShiftType::from_bits(shift_type) {
             ShiftType::LSL => self.LSL(val, rotate, s),
@@ -164,11 +169,17 @@ impl CPU {
                 }
                 0
             }
-            1..=32 => {
+            1..=31 => {
                 if set_condition {
                     self.cpsr.c_condition_bit = value.bit(rot as usize - 1);
                 }
                 value >> rot
+            }
+            32 => {
+                if set_condition {
+                    self.cpsr.c_condition_bit = value.bit(31);
+                }
+                0
             }
             _ => {
                 if set_condition {

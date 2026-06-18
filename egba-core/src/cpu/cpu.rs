@@ -23,6 +23,7 @@ pub struct CPU {
     pub cpsr: ProgramStatusRegister,
     pub spsr: u32,
     pub pipeline: [u32; 3],
+    pub pipeline_dirty: bool,
 }
 
 impl CPU {
@@ -35,6 +36,7 @@ impl CPU {
             cpsr: ProgramStatusRegister::new(),
             spsr: 0,
             pipeline: [0, 0, 0],
+            pipeline_dirty: false,
         }
     }
 
@@ -83,6 +85,7 @@ impl CPU {
                 self.reg[PC_INDEX] = self.reg[PC_INDEX].wrapping_add(2);
             }
         }
+        bus.tick(1);
         instr
     }
 
@@ -101,9 +104,12 @@ impl CPU {
         self.pipeline[0] = self.pipeline[1];
         self.pipeline[1] = self.pipeline[2];
 
+        self.pipeline_dirty = false;
         self.execute(bus, self.pipeline[0]);
 
-        self.pipeline[2] = self.fetch(bus);
+        if !self.pipeline_dirty {
+            self.pipeline[2] = self.fetch(bus);
+        }
     }
 
     pub(crate) fn flush_pipeline(&mut self, bus: &mut impl Bus) {
@@ -114,6 +120,7 @@ impl CPU {
 
         self.pipeline[1] = self.fetch(bus);
         self.pipeline[2] = self.fetch(bus);
+        self.pipeline_dirty = true;
     }
 }
 

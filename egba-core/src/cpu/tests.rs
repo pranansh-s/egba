@@ -8,12 +8,14 @@ mod tests {
     /// A simple flat memory bus for testing
     struct TestBus {
         mem: Vec<u8>,
+        ticks: u32,
     }
 
     impl TestBus {
         fn new(size: usize) -> Self {
             Self {
                 mem: vec![0; size],
+                ticks: 0,
             }
         }
 
@@ -41,6 +43,10 @@ mod tests {
         fn write_byte(&mut self, addr: u32, value: u8) {
             let a = (addr as usize) % self.mem.len();
             self.mem[a] = value;
+        }
+
+        fn tick(&mut self, n: u32) {
+            self.ticks += n;
         }
     }
 
@@ -608,6 +614,158 @@ mod tests {
         cpu.reg[PC_INDEX] = 0x104;
         // In Thumb mode, the "current" instruction PC is PC - 4
         assert_eq!(cpu.thumb_pc(), 0x100);
+    }
+
+    // =========================================================================
+    // Pipeline / branch correctness
+    // =========================================================================
+
+    #[test]
+    fn branch_then_executes_both_target_and_target_plus_4() {
+        // 0x00: B +0x10   (EA00 0002 → branches to 0x10)
+        // 0x10: MOV r0, #0x11
+        // 0x14: MOV r1, #0x22
+        // 0x18: MOV r2, #0x33
+        let mut cpu = CPU::new();
+        let mut bus = TestBus::new(0x1000);
+        bus.write_word_at(0x00, 0xEA00_0002);
+        bus.write_word_at(0x04, 0xE3A0_0000); // filler so flush after init reads safely
+        bus.write_word_at(0x10, 0xE3A0_0011); // MOV r0, #0x11
+        bus.write_word_at(0x14, 0xE3A0_1022); // MOV r1, #0x22
+        bus.write_word_at(0x18, 0xE3A0_2033); // MOV r2, #0x33
+
+        cpu.cpsr.operating_state = OperatingState::ARM;
+        cpu.reg[PC_INDEX] = 0x00;
+        cpu.flush_pipeline(&mut bus);
+
+        cpu.step(&mut bus); // executes B at 0x00 -> flush, lands at 0x10
+        cpu.step(&mut bus); // should execute MOV r0,#0x11 at 0x10
+        cpu.step(&mut bus); // should execute MOV r1,#0x22 at 0x14
+
+        assert_eq!(cpu.reg[0], 0x11, "MOV r0,#0x11 at 0x10 must execute after branch");
+        assert_eq!(
+            cpu.reg[1], 0x22,
+            "MOV r1,#0x22 at 0x14 must NOT be skipped by pipeline-fill"
+        );
+    }
+
+    // =========================================================================
+    // Shift-by-register Rs==0 edge case
+    // =========================================================================
+
+    #[test]
+    fn shift_by_reg_zero_preserves_value_and_carry() {
+        // MOVS r0, r1, LSR r2     with r1=0x7000_0000, r2=0, carry=true
+        // Per ARM7TDMI: when shift-by-register amount is 0, value and carry pass through.
+        let mut cpu = CPU::new();
+        let mut bus = TestBus::new(0x1000);
+        bus.write_word_at(0x000, 0xE1B0_0231); // MOVS r0, r1, LSR r2
+        bus.write_word_at(0x004, 0xE3A0_0000);
+        bus.write_word_at(0x008, 0xE3A0_0000);
+
+        cpu.cpsr.operating_state = OperatingState::ARM;
+        cpu.reg[PC_INDEX] = 0x00;
+        cpu.reg[1] = 0x7000_0000;
+        cpu.reg[2] = 0;
+        cpu.cpsr.c_condition_bit = true;
+        cpu.flush_pipeline(&mut bus);
+        cpu.step(&mut bus);
+
+        assert_eq!(cpu.reg[0], 0x7000_0000, "value should pass through");
+        assert!(cpu.cpsr.c_condition_bit, "carry must remain set");
+    }
+
+    #[test]
+    fn shift_by_reg_lsr_32_clears_value_carry_is_bit31() {
+        // MOVS r0, r1, LSR r2  with r1=0x8000_0000, r2=32
+        // Expected: r0 = 0, carry = bit31 of r1 = 1.
+        let mut cpu = CPU::new();
+        let mut bus = TestBus::new(0x1000);
+        bus.write_word_at(0x000, 0xE1B0_0231);
+        bus.write_word_at(0x004, 0xE3A0_0000);
+        bus.write_word_at(0x008, 0xE3A0_0000);
+
+        cpu.cpsr.operating_state = OperatingState::ARM;
+        cpu.reg[PC_INDEX] = 0x00;
+        cpu.reg[1] = 0x8000_0000;
+        cpu.reg[2] = 32;
+        cpu.cpsr.c_condition_bit = false;
+        cpu.flush_pipeline(&mut bus);
+        cpu.step(&mut bus);
+
+        assert_eq!(cpu.reg[0], 0, "LSR by 32 -> 0");
+        assert!(cpu.cpsr.c_condition_bit, "carry = bit31 of original");
+    }
+
+    // =========================================================================
+    // ARM LDR misaligned rotate
+    // =========================================================================
+
+    #[test]
+    fn arm_ldr_word_misaligned_rotates_right() {
+        // LDR r0, [r1]  =  0xE591_0000
+        let mut cpu = CPU::new();
+        let mut bus = TestBus::new(0x1000);
+        bus.write_word_at(0x000, 0xE591_0000);
+        bus.write_word_at(0x004, 0xE3A0_0000);
+        bus.write_word_at(0x008, 0xE3A0_0000);
+        bus.write_word_at(0x100, 0xDEAD_BEEF);
+
+        cpu.cpsr.operating_state = OperatingState::ARM;
+        cpu.reg[PC_INDEX] = 0x00;
+        cpu.reg[1] = 0x101;
+        cpu.flush_pipeline(&mut bus);
+        cpu.step(&mut bus);
+
+        // Word at 0x100 = 0xDEADBEEF rotated right 8 bits = 0xEFDEADBE
+        assert_eq!(cpu.reg[0], 0xEFDE_ADBE);
+    }
+
+    #[test]
+    fn arm_ldr_word_aligned_no_rotate() {
+        let mut cpu = CPU::new();
+        let mut bus = TestBus::new(0x1000);
+        bus.write_word_at(0x000, 0xE591_0000);
+        bus.write_word_at(0x004, 0xE3A0_0000);
+        bus.write_word_at(0x008, 0xE3A0_0000);
+        bus.write_word_at(0x100, 0xDEAD_BEEF);
+
+        cpu.cpsr.operating_state = OperatingState::ARM;
+        cpu.reg[PC_INDEX] = 0x00;
+        cpu.reg[1] = 0x100;
+        cpu.flush_pipeline(&mut bus);
+        cpu.step(&mut bus);
+
+        assert_eq!(cpu.reg[0], 0xDEAD_BEEF);
+    }
+
+    // =========================================================================
+    // Bus tick / cycle accounting
+    // =========================================================================
+
+    #[test]
+    fn cpu_step_ticks_bus_for_instruction_fetch() {
+        // ARM MOV r0, #0  (E3A00000)
+        let mut cpu = CPU::new();
+        let mut bus = TestBus::new(0x1000);
+        bus.write_word_at(0x00, 0xE3A0_0000);
+        bus.write_word_at(0x04, 0xE3A0_0000);
+        bus.write_word_at(0x08, 0xE3A0_0000);
+
+        cpu.cpsr.operating_state = OperatingState::ARM;
+        cpu.reg[PC_INDEX] = 0x00;
+        cpu.flush_pipeline(&mut bus);
+
+        let before = bus.ticks;
+        cpu.step(&mut bus);
+        let delta = bus.ticks - before;
+
+        // Single ARM data-proc step = 1 sequential fetch = 1 cycle (no memory access in MOV imm).
+        assert!(
+            delta >= 1,
+            "expected cpu.step to tick bus at least once, got {}",
+            delta
+        );
     }
 
     // =========================================================================

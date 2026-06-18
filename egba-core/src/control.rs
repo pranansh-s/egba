@@ -85,7 +85,7 @@ impl InterruptControl {
     }
 }
 
-#[derive(Default, PartialEq, Clone, Copy)]
+#[derive(Default, PartialEq, Clone, Copy, Debug)]
 pub(crate) enum PowerMode {
     #[default]
     Active,
