@@ -3,13 +3,18 @@ use crate::{
     bus::Bus,
     cartridge::Cartridge,
     control::{InterruptType, PowerMode},
-    cpu::cpu::CPU,
+    cpu::{
+        cpu::{CPU, PC_INDEX, SP_INDEX},
+        psr::{OperatingMode, OperatingState},
+    },
     dma::{Dma, DmaEvent},
     memory::Memory,
     video::VideoEvent,
 };
 
 pub const CYCLES_PER_FRAME: u32 = 280896;
+pub const FB_WIDTH: usize = 240;
+pub const FB_HEIGHT: usize = 160;
 
 pub struct GBA {
     cpu: CPU,
@@ -22,6 +27,29 @@ impl GBA {
         let mut cpu = CPU::new();
         let mut memory = Memory::new(bios, cartridge);
 
+        cpu.pipeline[1] = cpu.fetch(&mut memory);
+        cpu.pipeline[2] = cpu.fetch(&mut memory);
+
+        Self { cpu, memory }
+    }
+
+    #[must_use]
+    pub fn new_skipping_bios(bios: Bios, cartridge: Cartridge) -> Self {
+        let mut cpu = CPU::new();
+        let mut memory = Memory::new(bios, cartridge);
+
+        cpu.banks[OperatingMode::svc.current_bank_index()].sp = 0x0300_7FE0;
+        cpu.banks[OperatingMode::irq.current_bank_index()].sp = 0x0300_7FA0;
+        cpu.banks[OperatingMode::usr.current_bank_index()].sp = 0x0300_7F00;
+
+        cpu.set_mode(OperatingMode::sys);
+        cpu.cpsr.operating_state = OperatingState::ARM;
+        cpu.cpsr.irq_disable_bit = false;
+        cpu.cpsr.fiq_disable_bit = false;
+        cpu.reg[SP_INDEX] = 0x0300_7F00;
+        cpu.reg[PC_INDEX] = 0x0800_0000;
+
+        memory.bios_readable = false;
         cpu.pipeline[1] = cpu.fetch(&mut memory);
         cpu.pipeline[2] = cpu.fetch(&mut memory);
 

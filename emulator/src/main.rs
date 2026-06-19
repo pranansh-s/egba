@@ -1,6 +1,6 @@
 use std::{
     fs,
-    path::PathBuf,
+    path::{Path, PathBuf},
     time::{Duration, Instant},
 };
 
@@ -94,6 +94,53 @@ fn main() {
                 .long("debug")
                 .action(clap::ArgAction::SetTrue),
         )
+        .arg(
+            Arg::new("headless")
+                .help("Run without SDL window; advance --frames and exit")
+                .long("headless")
+                .action(clap::ArgAction::SetTrue),
+        )
+        .arg(
+            Arg::new("frames")
+                .help("Frames to advance in headless mode")
+                .long("frames")
+                .value_parser(clap::value_parser!(u32))
+                .default_value("1"),
+        )
+        .arg(
+            Arg::new("trace")
+                .help("Trace N instructions to docs/captures/trace.log and exit")
+                .long("trace")
+                .value_parser(clap::value_parser!(u32)),
+        )
+        .arg(
+            Arg::new("trace-out")
+                .help("Trace log path (default docs/captures/trace.log)")
+                .long("trace-out")
+                .value_parser(clap::value_parser!(PathBuf)),
+        )
+        .arg(
+            Arg::new("screenshot")
+                .help("After headless run, dump framebuffer PPM to this path")
+                .long("screenshot")
+                .value_parser(clap::value_parser!(PathBuf)),
+        )
+        .arg(
+            Arg::new("skip-bios")
+                .help("Skip BIOS boot animation; jump straight to cart entry at 0x08000000 with post-BIOS register/SP state")
+                .long("skip-bios")
+                .action(clap::ArgAction::SetTrue),
+        )
+        .arg(
+            Arg::new("break-pc")
+                .help("Stop trace when PC reaches this hex address (e.g. 080000C0)")
+                .long("break-pc"),
+        )
+        .arg(
+            Arg::new("watch")
+                .help("Comma-separated hex addresses to log on word-value change (e.g. 03007FFC,04000004)")
+                .long("watch"),
+        )
         .get_matches();
 
     let bios_path = args
@@ -121,7 +168,59 @@ fn main() {
     });
 
     let debug = args.get_flag("debug");
-    let mut egba = GBA::new(bios, cartridge);
+    let headless = args.get_flag("headless");
+    let skip_bios = args.get_flag("skip-bios");
+    let mut egba = if skip_bios {
+        GBA::new_skipping_bios(bios, cartridge)
+    } else {
+        GBA::new(bios, cartridge)
+    };
+
+    if let Some(&n) = args.get_one::<u32>("trace") {
+        let default_path = PathBuf::from("docs/captures/trace.log");
+        let out: &Path = args
+            .get_one::<PathBuf>("trace-out")
+            .map(PathBuf::as_path)
+            .unwrap_or(&default_path);
+
+        let break_pc = args
+            .get_one::<String>("break-pc")
+            .map(|s| u32::from_str_radix(s.trim_start_matches("0x"), 16).expect("invalid --break-pc hex"));
+        let watch: Vec<u32> = args
+            .get_one::<String>("watch")
+            .map(|s| {
+                s.split(',')
+                    .map(|t| u32::from_str_radix(t.trim().trim_start_matches("0x"), 16).expect("invalid --watch hex"))
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let result = if break_pc.is_some() || !watch.is_empty() {
+            egba.dump_trace_until(n, break_pc, &watch, out)
+        } else {
+            egba.dump_trace(n, out)
+        };
+        result.unwrap_or_else(|err| {
+            eprintln!("Error: {}", err);
+            std::process::exit(1);
+        });
+        return;
+    }
+
+    if headless {
+        let frames = *args.get_one::<u32>("frames").unwrap_or(&1);
+        for _ in 0..frames {
+            egba.run_frame();
+        }
+        if let Some(path) = args.get_one::<PathBuf>("screenshot") {
+            egba.dump_screenshot(path).unwrap_or_else(|err| {
+                eprintln!("Error: {}", err);
+                std::process::exit(1);
+            });
+        }
+        return;
+    }
+
     let mut egba_ui = EgbaUI::new().unwrap_or_else(|err| {
         eprintln!("Error: {}", err);
         std::process::exit(1);

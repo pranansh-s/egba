@@ -152,12 +152,20 @@ impl CPU {
         } else {
             self.reg[bit_r!(op, 0..4)]
         };
-        let mask = if f { 0xF000_0000 } else { 0xF00000DF };
+        let mut mask = if f { 0xF000_0000 } else { 0xF00000DF };
 
         if p {
             self.spsr = (self.spsr & !mask) | (bits & mask);
         } else {
-            self.cpsr = ProgramStatusRegister::from((u32::from(self.cpsr) & !mask) | (bits & mask));
+            if self.cpsr.mode == OperatingMode::usr {
+                mask &= 0xF000_0000;
+            }
+            let new_cpsr = (u32::from(self.cpsr) & !mask) | (bits & mask);
+            let new_psr: ProgramStatusRegister = new_cpsr.into();
+            if new_psr.mode != self.cpsr.mode {
+                self.set_mode(new_psr.mode);
+            }
+            self.cpsr = new_psr;
         }
     }
 
@@ -185,7 +193,7 @@ impl CPU {
             self.shift_by_reg(operand2, update_cpsr)
         };
 
-        if rn == PC_INDEX && operand2.bit(4) {
+        if !i && rn == PC_INDEX && operand2.bit(4) {
             op = op.wrapping_add(4);
         }
 
@@ -258,12 +266,18 @@ impl CPU {
             self.set_mode(OperatingMode::usr);
         }
 
+        let width = if b { 1 } else { 4 };
+        let c = bus.access_cycles(addr, width);
+        bus.tick(c);
+
         if l {
             self.reg[rd] = if b {
                 bus.read_byte(addr) as u32
             } else {
                 bus.read_word(addr).rotate_right(8 * (addr & 0b11))
             };
+
+            bus.tick(1);
 
             if rd == PC_INDEX {
                 self.flush_pipeline(bus);
@@ -321,6 +335,10 @@ impl CPU {
             (true, false) => self.reg[rn].wrapping_sub(shift),
         };
 
+        let width = if h { 2 } else { 1 };
+        let c = bus.access_cycles(addr, width);
+        bus.tick(c);
+
         if l {
             self.reg[rd] = if h {
                 let mut val = bus.read_hword(addr) as u32;
@@ -334,6 +352,7 @@ impl CPU {
             } else {
                 bus.read_byte(addr) as i8 as u32
             };
+            bus.tick(1);
         } else {
             bus.write_hword(addr, self.reg[rd] as u16);
         }
@@ -373,6 +392,8 @@ impl CPU {
         let mut addr = base_address;
         for r in 0..=PC_INDEX {
             if r_list.bit(r) {
+                let c = bus.access_cycles(addr, 4);
+                bus.tick(c);
                 if l {
                     self.reg[r] = bus.read_word(addr);
                 } else {
@@ -395,6 +416,10 @@ impl CPU {
 
                 addr += 4;
             }
+        }
+
+        if l {
+            bus.tick(1);
         }
 
         if s && !r_list.bit(PC_INDEX) {

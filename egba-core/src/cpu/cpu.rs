@@ -75,17 +75,21 @@ impl CPU {
     pub(crate) fn fetch(&mut self, bus: &mut impl Bus) -> u32 {
         let addr = self.reg[PC_INDEX];
         let instr;
+        let width;
         match self.cpsr.operating_state {
             OperatingState::ARM => {
                 instr = bus.read_word(addr);
                 self.reg[PC_INDEX] = self.reg[PC_INDEX].wrapping_add(4);
+                width = 4;
             }
             OperatingState::THUMB => {
                 instr = bus.read_hword(addr) as u32;
                 self.reg[PC_INDEX] = self.reg[PC_INDEX].wrapping_add(2);
+                width = 2;
             }
         }
-        bus.tick(1);
+        let c = bus.access_cycles(addr, width);
+        bus.tick(c);
         instr
     }
 
@@ -118,6 +122,7 @@ impl CPU {
             OperatingState::THUMB => !0b1,
         };
 
+        bus.invalidate_rom_seq();
         self.pipeline[1] = self.fetch(bus);
         self.pipeline[2] = self.fetch(bus);
         self.pipeline_dirty = true;

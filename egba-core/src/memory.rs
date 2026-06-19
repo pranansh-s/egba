@@ -34,6 +34,8 @@ pub(crate) struct Memory {
     pub(crate) video_cycle_debt: u32,
     pub(crate) pending_sound_dma: u8,
     pub(crate) bus_cycles: u64,
+
+    last_rom_access: u32,
 }
 
 impl Memory {
@@ -57,8 +59,10 @@ impl Memory {
             video_cycle_debt: 0,
             pending_sound_dma: 0,
             bus_cycles: 0,
+            last_rom_access: !0,
         }
     }
+
 }
 
 impl Bus for Memory {
@@ -205,9 +209,44 @@ impl Bus for Memory {
         self.write_hword(addr.wrapping_add(2), (value >> 16) as u16);
     }
 
-    /// Scheduler heartbeat. Every memory access from CPU / DMA funnels here
-    /// with the cycle cost of that access; we then advance PPU, APU, timers,
-    /// queuing events for the outer loop to drain at instruction boundary.
+    fn access_cycles(&mut self, addr: u32, width: u32) -> u32 {
+        let region = (addr >> 24) & 0xF;
+        let word = width >= 4;
+        match region {
+            0x0 | 0x3 | 0x4 | 0x7 => 1,
+            0x2 => {
+                if word {
+                    6
+                } else {
+                    3
+                }
+            }
+            0x5 | 0x6 => {
+                if word {
+                    2
+                } else {
+                    1
+                }
+            }
+            0x8 | 0x9 | 0xA | 0xB | 0xC | 0xD => {
+                let seq = addr == self.last_rom_access;
+                let cycles = if seq {
+                    self.system.rom_seq_cycles(addr, width)
+                } else {
+                    self.system.rom_access_cycles(addr, width)
+                };
+                self.last_rom_access = addr.wrapping_add(width);
+                cycles
+            }
+            0xE | 0xF => self.system.sram_access_cycles(),
+            _ => 1,
+        }
+    }
+
+    fn invalidate_rom_seq(&mut self) {
+        self.last_rom_access = u32::MAX;
+    }
+
     fn tick(&mut self, n: u32) {
         if n == 0 {
             return;
@@ -215,7 +254,6 @@ impl Bus for Memory {
 
         self.bus_cycles = self.bus_cycles.wrapping_add(n as u64);
 
-        // Timers.
         let timer_overflow = self.timers.step(n);
         for i in 0..4 {
             if timer_overflow & (1 << i) != 0 && self.timers.timer_irq_enabled(i) {
@@ -231,12 +269,8 @@ impl Bus for Memory {
             }
         }
 
-        // APU.
         self.apu.step(n);
 
-        // PPU: stepped per dot for now; replaced with cycle-batched step in
-        // a follow-up slice. Stash the cycle debt and let the outer loop
-        // drain it when it can deal with HBlank/VBlank events.
         self.video_cycle_debt = self.video_cycle_debt.saturating_add(n);
     }
 }
@@ -341,6 +375,90 @@ mod tests {
         // IWRAM is 32 KB. Region 0x03000000..=0x03FFFFFF mirrors every 32 KB.
         assert_eq!(m.read_byte(0x0300_8010), 0x42, "mirror at +32KB");
         assert_eq!(m.read_byte(0x03FF_8010), 0x42, "mirror near top");
+    }
+
+    #[test]
+    fn access_cycles_per_region() {
+        let mut m = build_memory();
+        // BIOS / IWRAM / IO / OAM: 1 cycle regardless of width.
+        assert_eq!(m.access_cycles(0x0000_0000, 4), 1);
+        assert_eq!(m.access_cycles(0x0300_0000, 4), 1);
+        assert_eq!(m.access_cycles(0x0400_0000, 4), 1);
+        assert_eq!(m.access_cycles(0x0700_0000, 4), 1);
+
+        // EWRAM: 16-bit bus -> word = 2x.
+        assert_eq!(m.access_cycles(0x0200_0000, 1), 3);
+        assert_eq!(m.access_cycles(0x0200_0000, 2), 3);
+        assert_eq!(m.access_cycles(0x0200_0000, 4), 6);
+
+        // Palette / VRAM: byte/hword = 1, word = 2.
+        assert_eq!(m.access_cycles(0x0500_0000, 2), 1);
+        assert_eq!(m.access_cycles(0x0500_0000, 4), 2);
+        assert_eq!(m.access_cycles(0x0600_0000, 2), 1);
+        assert_eq!(m.access_cycles(0x0600_0000, 4), 2);
+
+        // GamePak ROM: baseline 5 byte/hword, 8 word.
+        assert_eq!(m.access_cycles(0x0800_0000, 2), 5);
+        assert_eq!(m.access_cycles(0x0800_0000, 4), 8);
+
+        // SRAM: byte only, 5 cycles.
+        assert_eq!(m.access_cycles(0x0E00_0000, 1), 5);
+    }
+
+    #[test]
+    fn waitcnt_ws0_changes_rom_cycles() {
+        let mut m = build_memory();
+        // Default WAITCNT=0: ws0 N=4, S=2 -> byte=5, word=8.
+        assert_eq!(m.access_cycles(0x0800_0000, 2), 5);
+        assert_eq!(m.access_cycles(0x0900_0000, 4), 8);
+
+        // Set ws0 N=2 (idx=2 -> 2 waits), ws0 S=1 (bit4=1 -> 1 wait).
+        // WAITCNT bits[3:2]=10, bit4=1 -> low byte = 0b0001_1000 = 0x18.
+        m.write_byte(0x0400_0204, 0x18);
+        assert_eq!(m.access_cycles(0x0800_0100, 2), 3, "ws0 N changed");
+        assert_eq!(m.access_cycles(0x0800_0200, 4), 5, "ws0 word = N+S");
+    }
+
+    #[test]
+    fn invalidate_rom_seq_forces_next_access_to_n() {
+        let mut m = build_memory();
+        assert_eq!(m.access_cycles(0x0800_0000, 2), 5, "first N");
+        assert_eq!(m.access_cycles(0x0800_0002, 2), 3, "seq S");
+        m.invalidate_rom_seq();
+        assert_eq!(
+            m.access_cycles(0x0800_0004, 2),
+            5,
+            "after invalidate, even an address contiguous with last access must charge N"
+        );
+    }
+
+    #[test]
+    fn rom_seq_cycles_independent_of_prefetch_flag() {
+        // ROM bus always charges S on address matching last_rom_access.
+        // Prefetch (WAITCNT bit 14) governs whether the prefetcher fills during
+        // CPU idle, not the per-access cost.
+        for (prefetch_byte, label) in [(0x00u8, "prefetch off"), (0x40u8, "prefetch on")] {
+            let mut m = build_memory();
+            m.write_byte(0x0400_0205, prefetch_byte);
+
+            assert_eq!(m.access_cycles(0x0800_0000, 2), 5, "{label}: first = N");
+            assert_eq!(
+                m.access_cycles(0x0800_0002, 2),
+                3,
+                "{label}: sequential = S regardless of prefetch flag"
+            );
+            assert_eq!(m.access_cycles(0x0800_1000, 2), 5, "{label}: non-seq jump = N");
+        }
+    }
+
+    #[test]
+    fn waitcnt_sram_cycles() {
+        let mut m = build_memory();
+        // Default SRAM idx=0 -> 4 wait -> 5 cycles.
+        assert_eq!(m.access_cycles(0x0E00_0000, 1), 5);
+        // SRAM idx=2 -> 2 wait -> 3 cycles. bits[1:0]=10.
+        m.write_byte(0x0400_0204, 0b10);
+        assert_eq!(m.access_cycles(0x0E00_0000, 1), 3);
     }
 
     #[test]

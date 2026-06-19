@@ -65,7 +65,7 @@ impl CPU {
                     || (self.cpsr.n_condition_bit != self.cpsr.v_condition_bit)
             }
             0b1110 => true,
-            _ => unreachable!(),
+            _ => false,
         }
     }
 

@@ -5,7 +5,6 @@ use crate::{
     bit_r,
     bus::Bus,
     cpu::{
-        alu::is_test,
         cpu::{CPU, LR_INDEX, PC_INDEX, SP_INDEX},
         exception::Exception,
     },
@@ -179,7 +178,8 @@ impl CPU {
             _ => unreachable!(),
         };
 
-        if !is_test(opcode) {
+        let is_thumb_test = matches!(opcode, 0b1000 | 0b1010 | 0b1011);
+        if !is_thumb_test {
             self.reg[rd] = res;
         }
 
@@ -216,7 +216,10 @@ impl CPU {
 
     fn thumb_format6(&mut self, bus: &mut impl Bus, rd: usize, offset: u32) {
         let addr = (self.reg[PC_INDEX] & !0b10).wrapping_add(offset << 2);
+        let c = bus.access_cycles(addr, 4);
+        bus.tick(c);
         self.reg[rd] = bus.read_word(addr);
+        bus.tick(1);
 
         if rd == PC_INDEX {
             self.flush_pipeline(bus);
@@ -340,6 +343,8 @@ impl CPU {
 
         for r in 0..=7 {
             if r_list.bit(r) {
+                let c = bus.access_cycles(addr, 4);
+                bus.tick(c);
                 if l {
                     self.reg[r] = bus.read_word(addr);
                 } else {
@@ -348,6 +353,10 @@ impl CPU {
 
                 addr = addr.wrapping_add(4);
             }
+        }
+
+        if l {
+            bus.tick(1);
         }
 
         if !l || !rb_in_list {

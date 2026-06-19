@@ -798,4 +798,162 @@ mod tests {
         assert!(cpu.cpsr.c_condition_bit);
         assert!(!cpu.cpsr.irq_disable_bit);
     }
+
+    // =========================================================================
+    // MRS / MSR Tests (BIOS init relies on these)
+    // =========================================================================
+
+    #[test]
+    fn arm_mrs_copies_cpsr_to_rd() {
+        // MRS R12, CPSR  =  0xE10F_C000
+        // BIOS-relevant: MRSEQ R12, CPSR = 0x010F_C000 with cond=EQ.
+        let mut cpu = CPU::new();
+        let mut bus = TestBus::new(0x1000);
+        bus.write_word_at(0x00, 0xE10F_C000); // MRS r12, CPSR (AL)
+        bus.write_word_at(0x04, 0xE3A0_0000);
+        bus.write_word_at(0x08, 0xE3A0_0000);
+
+        cpu.cpsr.operating_state = OperatingState::ARM;
+        cpu.cpsr.mode = OperatingMode::svc;
+        cpu.cpsr.irq_disable_bit = true;
+        cpu.cpsr.fiq_disable_bit = true;
+        cpu.cpsr.c_condition_bit = true;
+        cpu.cpsr.z_condition_bit = true;
+        cpu.reg[PC_INDEX] = 0x00;
+        cpu.flush_pipeline(&mut bus);
+
+        let expected_cpsr: u32 = cpu.cpsr.into();
+        cpu.step(&mut bus);
+
+        assert_eq!(
+            cpu.reg[12], expected_cpsr,
+            "MRS must copy CPSR into Rd unchanged"
+        );
+    }
+
+    #[test]
+    fn thumb_neg_writes_back_negated_value() {
+        // THUMB format 4 opcode 0b1001 = NEG Rd, Rs => Rd = -Rs.
+        // Encoding: 0100_0010_01_Rs_Rd. NEG R0, R0 = 0b 01000010_01_000_000 = 0x4240.
+        // Bug: shared with ARM `is_test` table (0b1000..=0b1011) that suppresses writeback
+        // for TST/TEQ/CMP/CMN. THUMB NEG must still write Rd.
+        let mut cpu = CPU::new();
+        let mut bus = TestBus::new(0x1000);
+        bus.write_hword_at(0x00, 0x4240);
+        bus.write_hword_at(0x02, 0x46C0);
+        bus.write_hword_at(0x04, 0x46C0);
+
+        cpu.cpsr.operating_state = OperatingState::THUMB;
+        cpu.cpsr.mode = OperatingMode::sys;
+        cpu.reg[0] = 1;
+        cpu.reg[PC_INDEX] = 0x00;
+        cpu.flush_pipeline(&mut bus);
+
+        cpu.step(&mut bus);
+
+        assert_eq!(cpu.reg[0], 0xFFFF_FFFF, "NEG R0, R0 with R0=1 must yield -1");
+        assert!(cpu.cpsr.n_condition_bit, "NEG must set N flag for negative result");
+    }
+
+    #[test]
+    fn arm_adr_immediate_uses_pc_plus_8_not_plus_12() {
+        // ADD R0, PC, #0x258  =  E28F0F96.
+        // ARM ADR pattern: PC is read as self+8 for immediate operand2.
+        // The +12 (=self+8+4) rule applies ONLY to register-shift-by-register form (I=0, bit4=1).
+        // Bug: code applied +4 whenever operand2.bit(4)=1 regardless of I, breaking BIOS init
+        // (the boot-animation user IRQ vector was off by 4 -> handler skipped MOV R3 init -> IRQ never ack-ed).
+        let mut cpu = CPU::new();
+        let mut bus = TestBus::new(0x1000);
+        bus.write_word_at(0x00A0, 0xE28F_0F96);
+        bus.write_word_at(0x00A4, 0xE3A0_0000);
+        bus.write_word_at(0x00A8, 0xE3A0_0000);
+
+        cpu.cpsr.operating_state = OperatingState::ARM;
+        cpu.cpsr.mode = OperatingMode::svc;
+        cpu.reg[PC_INDEX] = 0xA0;
+        cpu.flush_pipeline(&mut bus);
+
+        cpu.step(&mut bus);
+
+        assert_eq!(
+            cpu.reg[0], 0x300,
+            "ADR-style ADD R0, PC, #0x258 with PC=0xA0 must read PC as 0xA8 (self+8), yielding 0x300"
+        );
+    }
+
+    #[test]
+    fn arm_msr_in_user_mode_ignores_control_field() {
+        // MSR CPSR_fc, #0x11 = 0xE329_F011. Tries to switch to fiq (mode bits 0b10001).
+        // User mode is unprivileged: ARM ARM mandates control-field writes are dropped.
+        let mut cpu = CPU::new();
+        let mut bus = TestBus::new(0x1000);
+        bus.write_word_at(0x00, 0xE329_F011);
+        bus.write_word_at(0x04, 0xE3A0_0000);
+        bus.write_word_at(0x08, 0xE3A0_0000);
+
+        cpu.cpsr.operating_state = OperatingState::ARM;
+        cpu.cpsr.mode = OperatingMode::usr;
+        cpu.reg[PC_INDEX] = 0x00;
+        cpu.flush_pipeline(&mut bus);
+
+        cpu.step(&mut bus);
+
+        assert_eq!(
+            cpu.cpsr.mode,
+            OperatingMode::usr,
+            "MSR control-field write from user mode must not switch mode"
+        );
+    }
+
+    #[test]
+    fn arm_msr_in_privileged_mode_changes_mode() {
+        // Same MSR but from svc -> must succeed (privileged).
+        let mut cpu = CPU::new();
+        let mut bus = TestBus::new(0x1000);
+        bus.write_word_at(0x00, 0xE329_F011);
+        bus.write_word_at(0x04, 0xE3A0_0000);
+        bus.write_word_at(0x08, 0xE3A0_0000);
+
+        cpu.cpsr.operating_state = OperatingState::ARM;
+        cpu.cpsr.mode = OperatingMode::svc;
+        cpu.reg[PC_INDEX] = 0x00;
+        cpu.flush_pipeline(&mut bus);
+
+        cpu.step(&mut bus);
+
+        assert_eq!(
+            cpu.cpsr.mode,
+            OperatingMode::fiq,
+            "MSR control-field write from svc must switch mode"
+        );
+    }
+
+    #[test]
+    fn arm_mrseq_runs_when_z_set_bios_init() {
+        // MRSEQ R12, CPSR = 0x010F_C000. With Z=1 (CPSR=0x600000D3), should write R12.
+        let mut cpu = CPU::new();
+        let mut bus = TestBus::new(0x1000);
+        bus.write_word_at(0x00, 0x010F_C000);
+        bus.write_word_at(0x04, 0xE3A0_0000);
+        bus.write_word_at(0x08, 0xE3A0_0000);
+
+        cpu.cpsr.operating_state = OperatingState::ARM;
+        cpu.cpsr.mode = OperatingMode::svc;
+        cpu.cpsr.irq_disable_bit = true;
+        cpu.cpsr.fiq_disable_bit = true;
+        cpu.cpsr.c_condition_bit = true;
+        cpu.cpsr.z_condition_bit = true;
+        cpu.reg[PC_INDEX] = 0x00;
+        cpu.flush_pipeline(&mut bus);
+
+        let cpsr_before: u32 = cpu.cpsr.into();
+        cpu.step(&mut bus);
+
+        assert_eq!(
+            cpu.reg[12], cpsr_before,
+            "MRSEQ with Z=1 must write CPSR to R12"
+        );
+        let cpsr_after: u32 = cpu.cpsr.into();
+        assert_eq!(cpsr_before, cpsr_after, "MRS must not alter CPSR");
+    }
 }

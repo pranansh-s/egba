@@ -8,6 +8,12 @@ pub(crate) trait Bus {
 
     fn tick(&mut self, _n: u32) {}
 
+    fn access_cycles(&mut self, _addr: u32, _width: u32) -> u32 {
+        1
+    }
+
+    fn invalidate_rom_seq(&mut self) {}
+
     fn read_hword(&self, addr: u32) -> u16 {
         let addr = addr & !0b1;
         u16::from_le_bytes([self.read_byte(addr), self.read_byte(addr.wrapping_add(1))])
