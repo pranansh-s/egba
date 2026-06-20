@@ -441,26 +441,18 @@ impl CPU {
     }
 
     pub(super) fn mul_m_cycles(rs: u32, signed: bool) -> u32 {
-        if signed {
-            if rs & 0xFFFF_FF00 == 0 || rs & 0xFFFF_FF00 == 0xFFFF_FF00 {
-                1
-            } else if rs & 0xFFFF_0000 == 0 || rs & 0xFFFF_0000 == 0xFFFF_0000 {
-                2
-            } else if rs & 0xFF00_0000 == 0 || rs & 0xFF00_0000 == 0xFF00_0000 {
-                3
-            } else {
-                4
-            }
+        let matches = |mask: u32| -> bool {
+            let m = rs & mask;
+            m == 0 || (signed && m == mask)
+        };
+        if matches(0xFFFF_FF00) {
+            1
+        } else if matches(0xFFFF_0000) {
+            2
+        } else if matches(0xFF00_0000) {
+            3
         } else {
-            if rs & 0xFFFF_FF00 == 0 {
-                1
-            } else if rs & 0xFFFF_0000 == 0 {
-                2
-            } else if rs & 0xFF00_0000 == 0 {
-                3
-            } else {
-                4
-            }
+            4
         }
     }
 

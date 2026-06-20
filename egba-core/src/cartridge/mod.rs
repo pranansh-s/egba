@@ -86,7 +86,7 @@ impl Cartridge {
 impl Bus for Cartridge {
     fn read_byte(&self, addr: u32) -> u8 {
         match addr {
-            0x0800_0000..=0x0dff_ffff => {
+            0x0800_0000..=0x0DFF_FFFF => {
                 if self.eeprom_read(addr as usize) {
                     match &self.backup {
                         Some(BackupMedia::Eeprom(eeprom)) => eeprom.read_byte(addr),
@@ -101,9 +101,9 @@ impl Bus for Cartridge {
                     }
                 }
             }
-            0x0e00_0000..=0x0e00_ffff => match &self.backup {
-                Some(BackupMedia::Sram(media)) => media.read_byte(addr & 0x7fff),
-                Some(BackupMedia::Flash(media)) => media.read_byte(addr & 0xffff),
+            0x0E00_0000..=0x0E00_FFFF => match &self.backup {
+                Some(BackupMedia::Sram(media)) => media.read_byte(addr & 0x7FFF),
+                Some(BackupMedia::Flash(media)) => media.read_byte(addr & 0xFFFF),
                 _ => 0xFF,
             },
             _ => 0xFF,
@@ -112,15 +112,15 @@ impl Bus for Cartridge {
 
     fn write_byte(&mut self, addr: u32, value: u8) {
         match addr {
-            0x0800_0000..=0x0dff_ffff if self.eeprom_read(addr as usize) => {
+            0x0800_0000..=0x0DFF_FFFF if self.eeprom_read(addr as usize) => {
                 if let Some(BackupMedia::Eeprom(eeprom)) = self.backup.as_mut() {
                     eeprom.write_byte(addr, value);
                 }
             }
-            0x0800_0000..=0x0dff_ffff => {}
-            0x0e00_0000..=0x0e00_ffff => match self.backup.as_mut() {
-                Some(BackupMedia::Sram(media)) => media.write_byte(addr & 0x7fff, value),
-                Some(BackupMedia::Flash(media)) => media.write_byte(addr & 0xffff, value),
+            0x0800_0000..=0x0DFF_FFFF => {}
+            0x0E00_0000..=0x0E00_FFFF => match self.backup.as_mut() {
+                Some(BackupMedia::Sram(media)) => media.write_byte(addr & 0x7FFF, value),
+                Some(BackupMedia::Flash(media)) => media.write_byte(addr & 0xFFFF, value),
                 _ => {}
             },
             _ => {}

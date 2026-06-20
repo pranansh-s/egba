@@ -11,19 +11,19 @@ pub const SP_INDEX: usize = 13;
 
 #[derive(Clone, Copy, Default)]
 pub struct BankedRegisters {
-    pub sp: u32,
-    pub lr: u32,
-    pub spsr: u32,
+    pub(crate) sp: u32,
+    pub(crate) lr: u32,
+    pub(crate) spsr: u32,
 }
 
 pub struct CPU {
     pub reg: [u32; 16],
-    pub fiq_r8_12_banked: [u32; 5],
-    pub banks: [BankedRegisters; 6],
+    pub(crate) fiq_r8_12_banked: [u32; 5],
+    pub(crate) banks: [BankedRegisters; 6],
     pub cpsr: ProgramStatusRegister,
-    pub spsr: u32,
+    pub(crate) spsr: u32,
     pub pipeline: [u32; 3],
-    pub pipeline_dirty: bool,
+    pub(crate) pipeline_dirty: bool,
 }
 
 impl CPU {

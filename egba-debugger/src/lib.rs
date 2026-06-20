@@ -2,10 +2,14 @@ use std::{
     fs::File,
     io::{stdout, BufWriter, Write},
     path::Path,
-    process::Command,
+    sync::Once,
 };
 
-use crossterm::{terminal, ExecutableCommand};
+use crossterm::{
+    cursor::MoveTo,
+    terminal::{self, Clear, ClearType},
+    ExecutableCommand,
+};
 use egba_core::{
     cpu::psr::OperatingState,
     gba::{FB_HEIGHT, FB_WIDTH, GBA},
@@ -20,8 +24,49 @@ use ratatui::{
 mod decoder;
 use decoder::{arm::arm_decode, thumb::thumb_decode};
 
+fn cpu_pc(gba: &GBA) -> u32 {
+    let cpu = gba.get_cpu();
+    match cpu.cpsr.operating_state {
+        OperatingState::ARM => cpu.arm_pc(),
+        OperatingState::THUMB => cpu.thumb_pc(),
+    }
+}
+
+fn open_trace_writer(log_path: &Path) -> std::io::Result<BufWriter<File>> {
+    if let Some(parent) = log_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    Ok(BufWriter::new(File::create(log_path)?))
+}
+
+fn write_trace_line(
+    w: &mut BufWriter<File>,
+    gba: &GBA,
+    i: u32,
+) -> std::io::Result<()> {
+    let cpu = gba.get_cpu();
+    let cpsr = cpu.cpsr;
+    let state_char = match cpsr.operating_state {
+        OperatingState::ARM => 'A',
+        OperatingState::THUMB => 'T',
+    };
+    let pc = match cpsr.operating_state {
+        OperatingState::ARM => cpu.arm_pc(),
+        OperatingState::THUMB => cpu.thumb_pc(),
+    };
+    let instr = cpu.pipeline[1];
+    let cpsr_word: u32 = cpsr.into();
+    let r = cpu.reg;
+    let cyc = gba.bus_cycles();
+    writeln!(
+        w,
+        "{:08} cyc={:10} {} pc={:08X} instr={:08X} cpsr={:08X} r0={:08X} r1={:08X} r2={:08X} r3={:08X} r12={:08X} sp={:08X} lr={:08X}",
+        i, cyc, state_char, pc, instr, cpsr_word, r[0], r[1], r[2], r[3], r[12], r[13], r[14],
+    )
+}
+
 pub trait EGBADebugger {
-    fn show_stats(&mut self) {}
+    fn show_stats(&mut self);
     fn dump_trace(&mut self, n: u32, log_path: &Path) -> std::io::Result<()>;
     fn dump_trace_until(
         &mut self,
@@ -34,10 +79,15 @@ pub trait EGBADebugger {
     fn dump_io_snapshot(&self) -> String;
 }
 
+static OVERLAY_INIT: Once = Once::new();
+
 impl EGBADebugger for GBA {
     fn show_stats(&mut self) {
-        Command::new("clear").status().ok();
-        stdout().execute(terminal::SetSize(180, 40)).unwrap();
+        OVERLAY_INIT.call_once(|| {
+            let _ = stdout().execute(terminal::SetSize(180, 40));
+        });
+        let _ = stdout().execute(Clear(ClearType::All));
+        let _ = stdout().execute(MoveTo(0, 0));
 
         let mut terminal = match Terminal::new(CrosstermBackend::new(stdout())) {
             Ok(t) => t,
@@ -115,43 +165,13 @@ impl EGBADebugger for GBA {
     }
 
     fn dump_trace(&mut self, n: u32, log_path: &Path) -> std::io::Result<()> {
-        if let Some(parent) = log_path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        let file = File::create(log_path)?;
-        let mut w = BufWriter::new(file);
+        let mut w = open_trace_writer(log_path)?;
 
         for i in 0..n {
             if i % 10_000 == 0 {
                 writeln!(w, "; {}", self.dump_io_snapshot())?;
             }
-            let cpu = self.get_cpu();
-            let cpsr = cpu.cpsr;
-            let state_char = match cpsr.operating_state {
-                OperatingState::ARM => 'A',
-                OperatingState::THUMB => 'T',
-            };
-            let pc = match cpsr.operating_state {
-                OperatingState::ARM => cpu.arm_pc(),
-                OperatingState::THUMB => cpu.thumb_pc(),
-            };
-            let instr = cpu.pipeline[1];
-            let cpsr_word: u32 = cpsr.into();
-            let r0 = cpu.reg[0];
-            let r1 = cpu.reg[1];
-            let r2 = cpu.reg[2];
-            let r3 = cpu.reg[3];
-            let r12 = cpu.reg[12];
-            let sp = cpu.reg[13];
-            let lr = cpu.reg[14];
-            let cyc = self.bus_cycles();
-
-            writeln!(
-                w,
-                "{:08} cyc={:10} {} pc={:08X} instr={:08X} cpsr={:08X} r0={:08X} r1={:08X} r2={:08X} r3={:08X} r12={:08X} sp={:08X} lr={:08X}",
-                i, cyc, state_char, pc, instr, cpsr_word, r0, r1, r2, r3, r12, sp, lr,
-            )?;
-
+            write_trace_line(&mut w, self, i)?;
             self.step_one_instruction();
         }
 
@@ -166,11 +186,7 @@ impl EGBADebugger for GBA {
         watch: &[u32],
         log_path: &Path,
     ) -> std::io::Result<()> {
-        if let Some(parent) = log_path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        let file = File::create(log_path)?;
-        let mut w = BufWriter::new(file);
+        let mut w = open_trace_writer(log_path)?;
 
         let mut watched: Vec<(u32, u32)> = watch.iter().map(|&a| (a, self.read_word(a))).collect();
 
@@ -180,12 +196,7 @@ impl EGBADebugger for GBA {
         }
 
         for i in 0..max_n {
-            let cpu = self.get_cpu();
-            let cpsr = cpu.cpsr;
-            let pc = match cpsr.operating_state {
-                OperatingState::ARM => cpu.arm_pc(),
-                OperatingState::THUMB => cpu.thumb_pc(),
-            };
+            let pc = cpu_pc(self);
 
             if let Some(bp) = break_pc {
                 if pc == bp {
@@ -199,30 +210,13 @@ impl EGBADebugger for GBA {
                 }
             }
 
-            let state_char = match cpsr.operating_state {
-                OperatingState::ARM => 'A',
-                OperatingState::THUMB => 'T',
-            };
-            let instr = cpu.pipeline[1];
-            let cpsr_word: u32 = cpsr.into();
-            let cyc = self.bus_cycles();
-            let regs = cpu.reg;
-            writeln!(
-                w,
-                "{:08} cyc={:10} {} pc={:08X} instr={:08X} cpsr={:08X} r0={:08X} r1={:08X} r2={:08X} r3={:08X} r12={:08X} sp={:08X} lr={:08X}",
-                i, cyc, state_char, pc, instr, cpsr_word,
-                regs[0], regs[1], regs[2], regs[3], regs[12], regs[13], regs[14],
-            )?;
-
+            write_trace_line(&mut w, self, i)?;
             self.step_one_instruction();
 
             for (addr, prev) in watched.iter_mut() {
                 let now = self.read_word(*addr);
                 if now != *prev {
-                    let pc_after = match self.get_cpu().cpsr.operating_state {
-                        OperatingState::ARM => self.get_cpu().arm_pc(),
-                        OperatingState::THUMB => self.get_cpu().thumb_pc(),
-                    };
+                    let pc_after = cpu_pc(self);
                     writeln!(
                         w,
                         "; WATCH [{:08X}] {:08X} -> {:08X} (after instr #{} at PC={:08X})",

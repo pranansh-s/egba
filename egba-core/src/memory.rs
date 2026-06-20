@@ -34,7 +34,7 @@ pub(crate) struct Memory {
     pub(crate) video_cycle_debt: u32,
     pub(crate) pending_sound_dma: u8,
     pub(crate) bus_cycles: u64,
-    pub(crate) pending_tick: u32,
+    pending_tick: u32,
 
     last_rom_access: u32,
 }
@@ -64,7 +64,6 @@ impl Memory {
             last_rom_access: !0,
         }
     }
-
 }
 
 impl Bus for Memory {
@@ -73,8 +72,7 @@ impl Bus for Memory {
         match addr {
             0x0000_0000..=0x0000_3FFF => {
                 if self.bios_readable {
-                    let v = self.bios.read(addr);
-                    v
+                    self.bios.read(addr)
                 } else {
                     self.last_bios_value
                 }
@@ -91,7 +89,7 @@ impl Bus for Memory {
                     0x130..=0x133 => self.keypad.read_byte(offset),
                     0x200..=0x203 | 0x208..=0x209 => self.interrupt.read_byte(offset),
                     0x204..=0x205 => self.system.read_byte(offset),
-                    _x => self.last_bus_value,
+                    _ => self.last_bus_value,
                 }
             }
             0x0500_0000..=0x05FF_FFFF => self.video.palette[(addr & 0x3FF) as usize],
@@ -108,7 +106,7 @@ impl Bus for Memory {
             0x0700_0000..=0x07FF_FFFF => self.video.oam[(addr & 0x3FF) as usize],
             0x0800_0000..=0x0FFF_FFFF => self.cartridge.read_byte(addr),
 
-            _x => self.last_bus_value,
+            _ => self.last_bus_value,
         }
     }
 
@@ -128,7 +126,7 @@ impl Bus for Memory {
                     0x130..=0x133 => self.keypad.write_byte(offset, value),
                     0x200..=0x203 | 0x208..=0x209 => self.interrupt.write_byte(offset, value),
                     0x204..=0x205 | 0x301 => self.system.write_byte(offset, value),
-                    _x => {}
+                    _ => {}
                 }
             }
             0x0500_0000..=0x05FF_FFFF => {
@@ -156,7 +154,7 @@ impl Bus for Memory {
             }
             0x0700_0000..=0x07FF_FFFF => {}
             0x0800_0000..=0x0FFF_FFFF => self.cartridge.write_byte(addr, value),
-            _x => {}
+            _ => {}
         }
     }
 

@@ -197,11 +197,6 @@ impl Dma {
             _ => unreachable!(),
         }
     }
-
-    #[allow(dead_code)]
-    pub(crate) fn channel_irq_enabled(&self, index: usize) -> bool {
-        self.channels[index].irq_enabled()
-    }
 }
 
 impl Bus for Dma {
@@ -214,9 +209,6 @@ impl Bus for Dma {
         }
 
         match reg {
-            0..=7 => 0,
-            8 => 0,
-            9 => 0,
             10 => self.channels[ch].control as u8,
             11 => (self.channels[ch].control >> 8) as u8,
             _ => 0,

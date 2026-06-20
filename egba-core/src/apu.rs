@@ -248,11 +248,8 @@ impl Bus for Apu {
             0x082 => self.soundcnt_h as u8,
             0x083 => (self.soundcnt_h >> 8) as u8,
             0x084 => (self.soundcnt_x & 0x80) as u8,
-            0x085 => 0,
             0x088 => self.soundbias as u8,
             0x089 => (self.soundbias >> 8) as u8,
-            0x060..=0x07F => 0,
-            0x0A0..=0x0A7 => 0,
             _ => 0,
         }
     }
@@ -290,15 +287,12 @@ impl Bus for Apu {
                     self.ds_b.current_sample = 0;
                 }
             }
-            0x085 => {}
             0x088 => {
                 self.soundbias = (self.soundbias & 0xFF00) | value as u16;
             }
             0x089 => {
                 self.soundbias = (self.soundbias & 0x00FF) | ((value as u16) << 8);
             }
-            0x060..=0x07F => {}
-            0x0A0..=0x0A7 => {}
             _ => {}
         }
     }

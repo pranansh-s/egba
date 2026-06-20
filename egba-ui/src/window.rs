@@ -17,39 +17,26 @@ use std::{error::Error, fmt};
 
 use sdl2::keyboard::Scancode;
 
-pub fn get_keystate(event_pump: &EventPump) -> u16 {
-    let mut keystate = 0xFFFF;
-    let keyboard_state = event_pump.keyboard_state();
+const KEY_BINDINGS: [(Scancode, u8); 10] = [
+    (Scancode::A, 0),
+    (Scancode::S, 1),
+    (Scancode::Z, 2),
+    (Scancode::X, 3),
+    (Scancode::Return, 4),
+    (Scancode::Space, 5),
+    (Scancode::Up, 6),
+    (Scancode::Down, 7),
+    (Scancode::Left, 8),
+    (Scancode::Right, 9),
+];
 
-    if keyboard_state.is_scancode_pressed(Scancode::A) {
-        keystate &= !(1 << 0);
-    }
-    if keyboard_state.is_scancode_pressed(Scancode::S) {
-        keystate &= !(1 << 1);
-    }
-    if keyboard_state.is_scancode_pressed(Scancode::Z) {
-        keystate &= !(1 << 2);
-    }
-    if keyboard_state.is_scancode_pressed(Scancode::X) {
-        keystate &= !(1 << 3);
-    }
-    if keyboard_state.is_scancode_pressed(Scancode::Return) {
-        keystate &= !(1 << 4);
-    }
-    if keyboard_state.is_scancode_pressed(Scancode::Space) {
-        keystate &= !(1 << 5);
-    }
-    if keyboard_state.is_scancode_pressed(Scancode::Up) {
-        keystate &= !(1 << 6);
-    }
-    if keyboard_state.is_scancode_pressed(Scancode::Down) {
-        keystate &= !(1 << 7);
-    }
-    if keyboard_state.is_scancode_pressed(Scancode::Left) {
-        keystate &= !(1 << 8);
-    }
-    if keyboard_state.is_scancode_pressed(Scancode::Right) {
-        keystate &= !(1 << 9);
+pub fn get_keystate(event_pump: &EventPump) -> u16 {
+    let keyboard = event_pump.keyboard_state();
+    let mut keystate: u16 = 0xFFFF;
+    for &(code, bit) in &KEY_BINDINGS {
+        if keyboard.is_scancode_pressed(code) {
+            keystate &= !(1 << bit);
+        }
     }
     keystate
 }
@@ -173,11 +160,6 @@ impl EgbaUI {
             .copy(&self.texture, None, Some(self.dest_rect))
             .expect("Failed to copy texture to canvas");
         self.canvas.present();
-    }
-
-    pub fn clear(&mut self) {
-        self.canvas.set_draw_color(Color::RGB(0, 0, 0));
-        self.canvas.clear();
     }
 
     pub fn queue_audio(&mut self, samples: &[(i16, i16)]) {

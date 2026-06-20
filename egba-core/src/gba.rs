@@ -103,13 +103,38 @@ impl GBA {
     }
 
     pub fn step_one_instruction(&mut self) {
+        let mut prof = FrameProfile::default();
+        let cap = self.memory.bus_cycles.wrapping_add(1);
+        self.tick_one(&mut prof, cap);
+    }
+
+    pub fn run_frame(&mut self) {
+        let start_cycles = self.memory.bus_cycles;
+        let target = start_cycles.wrapping_add(CYCLES_PER_FRAME as u64);
+        let mut prof = FrameProfile::default();
+        while self.memory.bus_cycles < target {
+            self.tick_one(&mut prof, target);
+        }
+        prof.cycles = self.memory.bus_cycles.wrapping_sub(start_cycles);
+        self.last_profile = prof;
+    }
+
+    fn tick_one(&mut self, prof: &mut FrameProfile, halt_batch_target: u64) {
         let power = self.memory.system.get_power_mode();
         if power == PowerMode::Active {
             let pc = self.cpu.reg[crate::cpu::cpu::PC_INDEX];
             self.memory.bios_readable = pc < 0x0000_4000;
             self.cpu.step(&mut self.memory);
+            prof.instructions += 1;
         } else if power != PowerMode::Stop {
-            <Memory as Bus>::tick(&mut self.memory, 1);
+            let frame_left = halt_batch_target.saturating_sub(self.memory.bus_cycles) as u32;
+            let video_left = self.memory.video.cycles_to_next_event();
+            let mut batch = frame_left.min(video_left);
+            if let Some(t) = self.memory.timers.cycles_to_next_overflow() {
+                batch = batch.min(t);
+            }
+            <Memory as Bus>::tick(&mut self.memory, batch.max(1));
+            prof.halt_steps += 1;
         }
 
         if power != PowerMode::Stop {
@@ -124,43 +149,6 @@ impl GBA {
         if irq_accepted {
             self.cpu.flush_pipeline(&mut self.memory);
         }
-    }
-
-    pub fn run_frame(&mut self) {
-        let start_cycles = self.memory.bus_cycles;
-        let target = start_cycles.wrapping_add(CYCLES_PER_FRAME as u64);
-        let mut prof = FrameProfile::default();
-        while self.memory.bus_cycles < target {
-            let power = self.memory.system.get_power_mode();
-            if power == PowerMode::Active {
-                let pc = self.cpu.reg[crate::cpu::cpu::PC_INDEX];
-                self.memory.bios_readable = pc < 0x0000_4000;
-                self.cpu.step(&mut self.memory);
-                prof.instructions += 1;
-            } else if power != PowerMode::Stop {
-                let frame_left = (target - self.memory.bus_cycles) as u32;
-                let video_left = self.memory.video.cycles_to_next_event();
-                let mut batch = frame_left.min(video_left);
-                if let Some(t) = self.memory.timers.cycles_to_next_overflow() {
-                    batch = batch.min(t);
-                }
-                <Memory as Bus>::tick(&mut self.memory, batch.max(1));
-                prof.halt_steps += 1;
-            }
-            if power != PowerMode::Stop {
-                self.memory.flush_pending_ticks();
-                self.drain_events();
-            }
-            let irq_accepted = self
-                .memory
-                .interrupt
-                .step(&mut self.cpu, &mut self.memory.system);
-            if irq_accepted {
-                self.cpu.flush_pipeline(&mut self.memory);
-            }
-        }
-        prof.cycles = self.memory.bus_cycles.wrapping_sub(start_cycles);
-        self.last_profile = prof;
     }
 
     pub fn read_byte(&self, addr: u32) -> u8 {
