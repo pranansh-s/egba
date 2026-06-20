@@ -2,14 +2,15 @@ use sdl2::{
     audio::{AudioQueue, AudioSpecDesired},
     pixels::{Color, PixelFormatEnum},
     rect::Rect,
-    render::{Canvas, TextureAccess},
-    video::Window,
+    render::{Canvas, Texture, TextureAccess, TextureCreator},
+    video::{Window, WindowContext},
     EventPump, Sdl,
 };
 
 const WIDTH: u32 = 240;
 const HEIGHT: u32 = 160;
 const SCALE: u32 = 3;
+const AUDIO_MAX_QUEUED_BYTES: u32 = 8192;
 
 use std::{error::Error, fmt};
 
@@ -83,6 +84,9 @@ pub struct EgbaUI {
     canvas: Canvas<Window>,
     context: Sdl,
     audio_device: AudioQueue<i16>,
+    _texture_creator: TextureCreator<WindowContext>,
+    texture: Texture,
+    dest_rect: Rect,
 }
 
 impl EgbaUI {
@@ -101,12 +105,23 @@ impl EgbaUI {
         let mut canvas = window
             .into_canvas()
             .accelerated()
+            .present_vsync()
             .build()
             .map_err(|e| EgbaUIError::CanvasCreationError(e.to_string()))?;
 
         canvas.set_draw_color(Color::RGB(0, 0, 0));
         canvas.clear();
         canvas.present();
+
+        let texture_creator = canvas.texture_creator();
+        let texture = texture_creator
+            .create_texture(
+                PixelFormatEnum::RGB888,
+                TextureAccess::Streaming,
+                WIDTH,
+                HEIGHT,
+            )
+            .map_err(|e| EgbaUIError::CanvasCreationError(e.to_string()))?;
 
         let audio_subsystem = context
             .audio()
@@ -128,6 +143,9 @@ impl EgbaUI {
             canvas,
             context,
             audio_device,
+            _texture_creator: texture_creator,
+            texture,
+            dest_rect: Rect::new(0, 0, WIDTH * SCALE, HEIGHT * SCALE),
         })
     }
 
@@ -136,37 +154,24 @@ impl EgbaUI {
     }
 
     pub fn render_frame(&mut self, framebuffer: &[u32]) {
-        let texture_creator = self.canvas.texture_creator();
-        let mut texture = texture_creator
-            .create_texture(
-                PixelFormatEnum::RGB888,
-                TextureAccess::Streaming,
-                WIDTH,
-                HEIGHT,
-            )
-            .expect("Failed to create texture");
-
-        let pixel_data: Vec<u8> = framebuffer
-            .iter()
-            .flat_map(|&pixel| {
-                let r = ((pixel >> 16) & 0xFF) as u8;
-                let g = ((pixel >> 8) & 0xFF) as u8;
-                let b = (pixel & 0xFF) as u8;
-                [0u8, r, g, b]
+        self.texture
+            .with_lock(None, |buffer: &mut [u8], pitch: usize| {
+                for y in 0..HEIGHT as usize {
+                    let row = &mut buffer[y * pitch..y * pitch + (WIDTH as usize) * 4];
+                    let src = &framebuffer[y * WIDTH as usize..(y + 1) * WIDTH as usize];
+                    for (i, &px) in src.iter().enumerate() {
+                        row[i * 4] = (px & 0xFF) as u8;
+                        row[i * 4 + 1] = ((px >> 8) & 0xFF) as u8;
+                        row[i * 4 + 2] = ((px >> 16) & 0xFF) as u8;
+                        row[i * 4 + 3] = 0;
+                    }
+                }
             })
-            .collect();
-
-        texture
-            .update(None, &pixel_data, (WIDTH * 4) as usize)
-            .expect("Failed to update texture");
+            .expect("Failed to lock texture");
 
         self.canvas.clear();
         self.canvas
-            .copy(
-                &texture,
-                None,
-                Some(Rect::new(0, 0, WIDTH * SCALE, HEIGHT * SCALE)),
-            )
+            .copy(&self.texture, None, Some(self.dest_rect))
             .expect("Failed to copy texture to canvas");
         self.canvas.present();
     }
@@ -180,10 +185,10 @@ impl EgbaUI {
         if samples.is_empty() {
             return;
         }
-        let interleaved: Vec<i16> = samples
-            .iter()
-            .flat_map(|&(l, r)| [l, r])
-            .collect();
+        if self.audio_device.size() > AUDIO_MAX_QUEUED_BYTES {
+            self.audio_device.clear();
+        }
+        let interleaved: Vec<i16> = samples.iter().flat_map(|&(l, r)| [l, r]).collect();
         let _ = self.audio_device.queue_audio(&interleaved);
     }
 }

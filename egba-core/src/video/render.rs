@@ -214,7 +214,12 @@ impl Video {
         let scroll_x = self.bgofs_x[bg] as usize & 0x1FF;
         let scroll_y = self.bgofs_y[bg] as usize & 0x1FF;
 
-        let map_y = (y + scroll_y) % layout_height;
+        let mosaic_on = self.bg_mosaic_enabled(bg);
+        let mh = if mosaic_on { self.bg_mosaic_h() as usize } else { 1 };
+        let mv = if mosaic_on { self.bg_mosaic_v() as usize } else { 1 };
+
+        let eff_y = (y / mv) * mv;
+        let map_y = (eff_y + scroll_y) % layout_height;
         let tile_y = map_y / 8;
         let pixel_y = map_y % 8;
 
@@ -223,7 +228,8 @@ impl Video {
             if win_mask[x] & bg_win_bit == 0 {
                 continue;
             }
-            let map_x = (x + scroll_x) % layout_width;
+            let eff_x = (x / mh) * mh;
+            let map_x = (eff_x + scroll_x) % layout_width;
             let tile_x = map_x / 8;
             let pixel_x = map_x % 8;
 
@@ -335,13 +341,17 @@ impl Video {
         let pa = self.bgaffine[affine_idx][0] as i16 as i32;
         let pc = self.bgaffine[affine_idx][2] as i16 as i32;
 
+        let mosaic_on = self.bg_mosaic_enabled(bg);
+        let mh = if mosaic_on { self.bg_mosaic_h() as i32 } else { 1 };
+
         let bg_win_bit = 1u8 << bg;
         for x in 0..WIDTH {
             if win_mask[x] & bg_win_bit == 0 {
                 continue;
             }
-            let tex_x = (ref_x + pa * (x as i32)) >> 8;
-            let tex_y = (ref_y + pc * (x as i32)) >> 8;
+            let eff_x = (x as i32 / mh) * mh;
+            let tex_x = (ref_x + pa * eff_x) >> 8;
+            let tex_y = (ref_y + pc * eff_x) >> 8;
 
             let (tx, ty) = if wrap {
                 (
@@ -487,7 +497,13 @@ impl Video {
         semi_transparent: bool,
         win_mask: &[u8; WIDTH],
     ) {
-        let local_y = if sprite.v_flip { h - 1 - ly } else { ly };
+        let (mh, mv) = if sprite.mosaic {
+            (self.obj_mosaic_h() as i16, self.obj_mosaic_v() as i16)
+        } else {
+            (1, 1)
+        };
+        let mly = (ly / mv) * mv;
+        let local_y = if sprite.v_flip { h - 1 - mly } else { mly };
 
         for lx in 0..w {
             let screen_x = sprite.x + lx;
@@ -498,7 +514,8 @@ impl Video {
                 continue;
             }
 
-            let local_x = if sprite.h_flip { w - 1 - lx } else { lx };
+            let mlx = (lx / mh) * mh;
+            let local_x = if sprite.h_flip { w - 1 - mlx } else { mlx };
             let sx = screen_x as usize;
 
             self.fetch_sprite_pixel(sprite, local_x, local_y, is_1d_mapping, |color| {
@@ -714,14 +731,20 @@ impl Video {
             } else {
                 sprite.tile_id + tile_offset
             }
+        } else if sprite.is_8bpp {
+            sprite.tile_id + (tile_y * 32) + (tile_x * 2)
         } else {
             sprite.tile_id + (tile_y * 32) + tile_x
         };
 
+        if self.bg_mode() >= 3 && (tile_id & 0x3FF) < 512 {
+            return;
+        }
+
         let base_addr = 0x10000;
 
         if sprite.is_8bpp {
-            let tile_addr = base_addr + (tile_id as usize & 0x3FF) * 64 + pixel_y * 8 + pixel_x;
+            let tile_addr = base_addr + (tile_id as usize & 0x3FF) * 32 + pixel_y * 8 + pixel_x;
             if tile_addr < self.vram.len() {
                 let color_idx = self.vram[tile_addr] as usize;
                 if color_idx != 0 {

@@ -284,7 +284,7 @@ impl CPU {
             }
         } else {
             let val = if rd == PC_INDEX {
-                self.reg[PC_INDEX].wrapping_add(12)
+                self.reg[PC_INDEX].wrapping_add(4)
             } else {
                 self.reg[rd]
             };
@@ -398,7 +398,7 @@ impl CPU {
                     self.reg[r] = bus.read_word(addr);
                 } else {
                     let val = if r == PC_INDEX {
-                        self.reg[PC_INDEX].wrapping_add(12)
+                        self.reg[PC_INDEX].wrapping_add(4)
                     } else {
                         self.reg[r]
                     };

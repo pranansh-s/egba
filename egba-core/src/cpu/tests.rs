@@ -138,6 +138,54 @@ mod tests {
     }
 
     #[test]
+    fn alu_adc_scenarios() {
+        // Table-driven ADC: rows cover carry-in / unsigned overflow / signed overflow.
+        let cases: [(u32, u32, bool, u32, bool, bool, &str); 6] = [
+            (10, 20, false, 30, false, false, "no overflow no carry"),
+            (10, 20, true,  31, false, false, "carry in adds 1"),
+            (0xFFFF_FFFF, 0, true, 0, true, false, "carry in causes unsigned wrap, V false"),
+            (0x7FFF_FFFF, 1, false, 0x8000_0000, false, true,
+                "positive + positive crosses sign, V true"),
+            (0x8000_0000, 0x8000_0000, false, 0, true, true,
+                "negative + negative wraps to 0, V true"),
+            (0x7FFF_FFFF, 0, true, 0x8000_0000, false, true,
+                "positive + 0 + carry crosses sign, V true"),
+        ];
+        for (op, op2, c_in, expected_res, expected_c, expected_v, label) in cases {
+            let mut cpu = CPU::new();
+            let res = cpu.ADC(op, op2, true, c_in);
+            assert_eq!(res, expected_res, "{label} result");
+            assert_eq!(cpu.cpsr.c_condition_bit, expected_c, "{label} C flag");
+            assert_eq!(cpu.cpsr.v_condition_bit, expected_v, "{label} V flag");
+        }
+    }
+
+    #[test]
+    fn alu_sbc_scenarios() {
+        // Table-driven SBC: rows cover borrow / no-borrow / sign-overflow / op<op2.
+        // Carry-in convention: carry=true means NO borrow (C=1), carry=false means borrow (C=0).
+        // C-out: 1 means no borrow occurred; 0 means borrow occurred.
+        // V-out: signed overflow.
+        let cases: [(u32, u32, bool, u32, bool, bool, &str); 7] = [
+            (30, 10, true,  20,         true,  false, "no borrow in, op>op2"),
+            (30, 10, false, 19,         true,  false, "borrow in, op>op2 by margin"),
+            (10, 10, false, 0xFFFF_FFFF,false, false, "borrow in, op==op2 -> result wraps, borrow out"),
+            (10, 10, true,  0,          true,  false, "no borrow in, op==op2 -> 0, no borrow"),
+            (5,  10, true,  0xFFFF_FFFB, false, false,"no borrow in, op<op2 -> wraps, borrow out"),
+            (5,  10, false, 0xFFFF_FFFA, false, false,"borrow in, op<op2 -> wraps further, borrow out"),
+            (0x8000_0000, 0x0000_0001, true, 0x7FFF_FFFF, true, true,
+                "INT_MIN - 1 signed overflow"),
+        ];
+        for (op, op2, c_in, expected_res, expected_c, expected_v, label) in cases {
+            let mut cpu = CPU::new();
+            let res = cpu.SBC(op, op2, true, c_in);
+            assert_eq!(res, expected_res, "{label} result");
+            assert_eq!(cpu.cpsr.c_condition_bit, expected_c, "{label} C flag");
+            assert_eq!(cpu.cpsr.v_condition_bit, expected_v, "{label} V flag");
+        }
+    }
+
+    #[test]
     fn alu_and() {
         let mut cpu = CPU::new();
         assert_eq!(cpu.AND(0xFF00_FF00, 0x00FF_00FF), 0);
@@ -652,6 +700,56 @@ mod tests {
     // =========================================================================
     // Shift-by-register Rs==0 edge case
     // =========================================================================
+
+    #[test]
+    fn arm_str_pc_stores_self_plus_12() {
+        // ARM7TDMI quirk: STR R15 stores (address_of_STR + 12).
+        // Since reg[PC] = self+8 during execute, that equals reg[PC] + 4.
+        // E580F000 = STR R15, [R0]  (P=1,U=1,B=0,W=0,L=0,Rn=R0,Rd=R15,off=0)
+        let mut cpu = CPU::new();
+        let mut bus = TestBus::new(0x1000);
+        bus.write_word_at(0x100, 0xE580_F000);
+        bus.write_word_at(0x104, 0xE3A0_0000);
+        bus.write_word_at(0x108, 0xE3A0_0000);
+
+        cpu.cpsr.operating_state = OperatingState::ARM;
+        cpu.reg[PC_INDEX] = 0x100;
+        cpu.reg[0] = 0x200;
+        cpu.flush_pipeline(&mut bus);
+        cpu.step(&mut bus);
+
+        let stored = u32::from_le_bytes([
+            bus.mem[0x200],
+            bus.mem[0x201],
+            bus.mem[0x202],
+            bus.mem[0x203],
+        ]);
+        assert_eq!(stored, 0x10C, "STR PC must store self+12 per ARM7TDMI");
+    }
+
+    #[test]
+    fn arm_stm_pc_stores_self_plus_12() {
+        // STMIA R0!, {R15}   E880_8000
+        let mut cpu = CPU::new();
+        let mut bus = TestBus::new(0x1000);
+        bus.write_word_at(0x100, 0xE880_8000);
+        bus.write_word_at(0x104, 0xE3A0_0000);
+        bus.write_word_at(0x108, 0xE3A0_0000);
+
+        cpu.cpsr.operating_state = OperatingState::ARM;
+        cpu.reg[PC_INDEX] = 0x100;
+        cpu.reg[0] = 0x200;
+        cpu.flush_pipeline(&mut bus);
+        cpu.step(&mut bus);
+
+        let stored = u32::from_le_bytes([
+            bus.mem[0x200],
+            bus.mem[0x201],
+            bus.mem[0x202],
+            bus.mem[0x203],
+        ]);
+        assert_eq!(stored, 0x10C, "STM PC must store self+12 per ARM7TDMI");
+    }
 
     #[test]
     fn shift_by_reg_zero_preserves_value_and_carry() {

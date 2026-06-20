@@ -134,9 +134,12 @@ impl Video {
                 }
             }
 
+            if self.vcount == TOTAL_LINES - 1 {
+                self.dispstat.set_bit(0, false);
+            }
+
             if self.vcount >= TOTAL_LINES {
                 self.vcount = 0;
-                self.dispstat.set_bit(0, false);
             }
 
             let lyc = self.dispstat.bit_range(8..16);
@@ -179,6 +182,26 @@ impl Video {
         let g = (((color >> 5) & 0x1F) as u32) << 3;
         let b = (((color >> 10) & 0x1F) as u32) << 3;
         (r << 16) | (g << 8) | b
+    }
+
+    pub(crate) fn bg_mosaic_h(&self) -> u16 {
+        (self.mosaic & 0xF) + 1
+    }
+
+    pub(crate) fn bg_mosaic_v(&self) -> u16 {
+        ((self.mosaic >> 4) & 0xF) + 1
+    }
+
+    pub(crate) fn obj_mosaic_h(&self) -> u16 {
+        ((self.mosaic >> 8) & 0xF) + 1
+    }
+
+    pub(crate) fn obj_mosaic_v(&self) -> u16 {
+        ((self.mosaic >> 12) & 0xF) + 1
+    }
+
+    pub(crate) fn bg_mosaic_enabled(&self, bg: usize) -> bool {
+        self.bgcnt[bg].bit(6)
     }
 
     pub(crate) fn sign_extend_28(&self, val: u32) -> i32 {

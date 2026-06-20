@@ -83,7 +83,7 @@ impl Bus for Memory {
                 match offset {
                     0x000..=0x056 => self.video.read_byte(offset),
                     0x060..=0x089 | 0x0A0..=0x0A7 => self.apu.read_byte(offset),
-                    0x0B0..=0x0DE => self.dma.read_byte(offset),
+                    0x0B0..=0x0DF => self.dma.read_byte(offset),
                     0x100..=0x10F => self.timers.read_byte(offset),
                     0x130..=0x133 => self.keypad.read_byte(offset),
                     0x200..=0x203 | 0x208..=0x209 => self.interrupt.read_byte(offset),
@@ -119,7 +119,7 @@ impl Bus for Memory {
                 match offset {
                     0x000..=0x056 => self.video.write_byte(offset, value),
                     0x060..=0x089 | 0x0A0..=0x0A7 => self.apu.write_byte(offset, value),
-                    0x0B0..=0x0DE => self.dma.write_byte(offset, value),
+                    0x0B0..=0x0DF => self.dma.write_byte(offset, value),
                     0x100..=0x10F => self.timers.write_byte(offset, value),
                     0x130..=0x133 => self.keypad.write_byte(offset, value),
                     0x200..=0x203 | 0x208..=0x209 => self.interrupt.write_byte(offset, value),
@@ -459,6 +459,20 @@ mod tests {
         // SRAM idx=2 -> 2 wait -> 3 cycles. bits[1:0]=10.
         m.write_byte(0x0400_0204, 0b10);
         assert_eq!(m.access_cycles(0x0E00_0000, 1), 3);
+    }
+
+    #[test]
+    fn dma3_control_high_byte_routes_to_dma() {
+        // DMA3 control register is at 0x040000DC..0x040000DF (4 bytes:
+        // 2 = count_l/h, 2 = ctrl_l/h). The enable bit lives in ctrl_h
+        // (offset 11), which is at IO address 0x0DF. The IO range must
+        // include 0x0DF or the enable write never reaches the DMA module
+        // and the channel never runs.
+        let mut m = build_memory();
+        // Write 0x80 to the high byte of DMA3 control (enable bit).
+        m.write_byte(0x0400_00DF, 0x80);
+        // Bus read of the same byte must reflect what DMA stored.
+        assert_eq!(m.read_byte(0x0400_00DF), 0x80, "DMA3 enable byte must round-trip");
     }
 
     #[test]
