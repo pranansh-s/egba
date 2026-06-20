@@ -72,6 +72,7 @@ impl CPU {
         }
     }
 
+    #[inline]
     pub(crate) fn fetch(&mut self, bus: &mut impl Bus) -> u32 {
         let addr = self.reg[PC_INDEX];
         let instr;
@@ -104,6 +105,7 @@ impl CPU {
         }
     }
 
+    #[inline]
     pub(crate) fn step(&mut self, bus: &mut impl Bus) {
         self.pipeline[0] = self.pipeline[1];
         self.pipeline[1] = self.pipeline[2];

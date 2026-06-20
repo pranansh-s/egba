@@ -33,10 +33,23 @@ impl Timer {
 #[derive(Default)]
 pub(crate) struct Timers {
     timers: [Timer; 4],
+    any_active: bool,
 }
 
 impl Timers {
+    fn refresh_any_active(&mut self) {
+        self.any_active = self
+            .timers
+            .iter()
+            .enumerate()
+            .any(|(i, t)| t.enabled() && !(i > 0 && t.cascade()));
+    }
+
+    #[inline]
     pub(crate) fn step(&mut self, cycles: u32) -> u8 {
+        if !self.any_active {
+            return 0;
+        }
         let mut overflow_flags: u8 = 0;
 
         for i in 0..4 {
@@ -97,6 +110,24 @@ impl Timers {
 
     pub(crate) fn timer_irq_enabled(&self, index: usize) -> bool {
         self.timers[index].irq_enabled()
+    }
+
+    pub(crate) fn cycles_to_next_overflow(&self) -> Option<u32> {
+        if !self.any_active {
+            return None;
+        }
+        let mut best: Option<u32> = None;
+        for i in 0..4 {
+            let t = &self.timers[i];
+            if !t.enabled() || (i > 0 && t.cascade()) {
+                continue;
+            }
+            let prescaler = t.prescaler();
+            let ticks_left = (0x10000u32 - t.counter as u32).saturating_mul(prescaler);
+            let cycles = ticks_left.saturating_sub(t.internal_counter).max(1);
+            best = Some(best.map_or(cycles, |b| b.min(cycles)));
+        }
+        best
     }
 }
 
@@ -197,11 +228,13 @@ impl Bus for Timers {
                     self.timers[timer_idx].counter = self.timers[timer_idx].reload;
                     self.timers[timer_idx].internal_counter = 0;
                 }
+                self.refresh_any_active();
             }
             3 => {
                 self.timers[timer_idx]
                     .control
                     .set_bit_range(8..16, value as u16);
+                self.refresh_any_active();
             }
             _ => {}
         }

@@ -10,7 +10,8 @@ use sdl2::{
 const WIDTH: u32 = 240;
 const HEIGHT: u32 = 160;
 const SCALE: u32 = 3;
-const AUDIO_MAX_QUEUED_BYTES: u32 = 8192;
+const AUDIO_TARGET_QUEUED_BYTES: u32 = 8192;
+const AUDIO_DROP_THRESHOLD_BYTES: u32 = 16384;
 
 use std::{error::Error, fmt};
 
@@ -88,13 +89,15 @@ pub struct EgbaUI {
     texture: Texture,
     dest_rect: Rect,
     audio_buf: Vec<i16>,
-    pixel_buf: Vec<u8>,
 }
 
 impl EgbaUI {
     pub fn new() -> Result<Self, EgbaUIError> {
-        sdl2::hint::set("SDL_HINT_RENDER_DRIVER", "metal");
+        let driver = std::env::var("EGBA_RENDER_DRIVER").unwrap_or_else(|_| "opengl".to_string());
+        sdl2::hint::set("SDL_HINT_RENDER_DRIVER", &driver);
         sdl2::hint::set("SDL_RENDER_VSYNC", "0");
+        sdl2::hint::set("SDL_HINT_VIDEO_HIGHDPI_DISABLED", "1");
+        sdl2::hint::set("SDL_HINT_RENDER_SCALE_QUALITY", "0");
         let context = sdl2::init().map_err(|e| EgbaUIError::SdlInitError(e.to_string()))?;
         let video = context
             .video()
@@ -105,11 +108,13 @@ impl EgbaUI {
             .position_centered()
             .build()
             .map_err(|e| EgbaUIError::WindowCreationError(e.to_string()))?;
+
         let mut canvas = window
             .into_canvas()
             .accelerated()
             .build()
             .map_err(|e| EgbaUIError::CanvasCreationError(e.to_string()))?;
+
 
         canvas.set_draw_color(Color::RGB(0, 0, 0));
         canvas.clear();
@@ -149,7 +154,6 @@ impl EgbaUI {
             texture,
             dest_rect: Rect::new(0, 0, WIDTH * SCALE, HEIGHT * SCALE),
             audio_buf: Vec::with_capacity(4096),
-            pixel_buf: vec![0u8; (WIDTH * HEIGHT * 4) as usize],
         })
     }
 
@@ -158,11 +162,11 @@ impl EgbaUI {
     }
 
     pub fn render_frame(&mut self, framebuffer: &[u32]) {
-        for (out, &px) in self.pixel_buf.chunks_exact_mut(4).zip(framebuffer.iter()) {
-            out.copy_from_slice(&px.to_le_bytes());
-        }
+        let bytes: &[u8] = unsafe {
+            std::slice::from_raw_parts(framebuffer.as_ptr().cast::<u8>(), framebuffer.len() * 4)
+        };
         self.texture
-            .update(None, &self.pixel_buf, (WIDTH * 4) as usize)
+            .update(None, bytes, (WIDTH * 4) as usize)
             .expect("Failed to update texture");
 
         self.canvas
@@ -180,12 +184,21 @@ impl EgbaUI {
         if samples.is_empty() {
             return;
         }
-        if self.audio_device.size() > AUDIO_MAX_QUEUED_BYTES {
-            self.audio_device.clear();
+        let queued = self.audio_device.size();
+        if queued > AUDIO_DROP_THRESHOLD_BYTES {
+            return;
+        }
+        let take = if queued > AUDIO_TARGET_QUEUED_BYTES {
+            samples.len() / 2
+        } else {
+            samples.len()
+        };
+        if take == 0 {
+            return;
         }
         self.audio_buf.clear();
-        self.audio_buf.reserve(samples.len() * 2);
-        for &(l, r) in samples {
+        self.audio_buf.reserve(take * 2);
+        for &(l, r) in &samples[..take] {
             self.audio_buf.push(l);
             self.audio_buf.push(r);
         }

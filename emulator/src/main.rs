@@ -20,8 +20,6 @@ fn run(ui: &mut EgbaUI, gba: &mut GBA, debug: bool) {
         .expect("Failed to create SDL2 event pump");
 
     let mut next_frame_at = Instant::now() + FRAME_DURATION;
-    let mut fps_window_start = Instant::now();
-    let mut fps_window_frames: u32 = 0;
 
     '_game: loop {
         for event in event_pump.poll_iter() {
@@ -42,7 +40,6 @@ fn run(ui: &mut EgbaUI, gba: &mut GBA, debug: bool) {
                 _ => {}
             }
         }
-
         let keystate = get_keystate(&event_pump);
         gba.update_keypad(keystate);
 
@@ -53,17 +50,8 @@ fn run(ui: &mut EgbaUI, gba: &mut GBA, debug: bool) {
 
         gba.run_frame();
         ui.render_frame(gba.framebuffer());
-        let audio_samples = gba.drain_audio();
-        ui.queue_audio(&audio_samples);
-
-        fps_window_frames += 1;
-        let elapsed = fps_window_start.elapsed();
-        if elapsed >= Duration::from_secs(1) {
-            let fps = fps_window_frames as f64 / elapsed.as_secs_f64();
-            eprintln!("fps: {:.1}", fps);
-            fps_window_frames = 0;
-            fps_window_start = Instant::now();
-        }
+        ui.queue_audio(gba.audio_samples());
+        gba.clear_audio();
 
         let now = Instant::now();
         if now < next_frame_at {

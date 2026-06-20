@@ -34,6 +34,7 @@ pub(crate) struct Memory {
     pub(crate) video_cycle_debt: u32,
     pub(crate) pending_sound_dma: u8,
     pub(crate) bus_cycles: u64,
+    pub(crate) pending_tick: u32,
 
     last_rom_access: u32,
 }
@@ -59,6 +60,7 @@ impl Memory {
             video_cycle_debt: 0,
             pending_sound_dma: 0,
             bus_cycles: 0,
+            pending_tick: 0,
             last_rom_access: !0,
         }
     }
@@ -66,6 +68,7 @@ impl Memory {
 }
 
 impl Bus for Memory {
+    #[inline]
     fn read_byte(&self, addr: u32) -> u8 {
         match addr {
             0x0000_0000..=0x0000_3FFF => {
@@ -109,6 +112,7 @@ impl Bus for Memory {
         }
     }
 
+    #[inline]
     fn write_byte(&mut self, addr: u32, value: u8) {
         match addr {
             0x0200_0000..=0x02FF_FFFF => self.ewram.write_byte(addr & 0x3_FFFF, value),
@@ -156,6 +160,7 @@ impl Bus for Memory {
         }
     }
 
+    #[inline]
     fn read_hword(&self, addr: u32) -> u16 {
         let addr = addr & !0b1;
         match addr {
@@ -184,6 +189,7 @@ impl Bus for Memory {
         }
     }
 
+    #[inline]
     fn read_word(&self, addr: u32) -> u32 {
         let addr = addr & !0b11;
         match addr {
@@ -292,6 +298,7 @@ impl Bus for Memory {
         self.write_hword(addr.wrapping_add(2), (value >> 16) as u16);
     }
 
+    #[inline]
     fn access_cycles(&mut self, addr: u32, width: u32) -> u32 {
         let region = (addr >> 24) & 0xF;
         let word = width >= 4;
@@ -330,14 +337,34 @@ impl Bus for Memory {
         self.last_rom_access = u32::MAX;
     }
 
+    #[inline]
     fn tick(&mut self, n: u32) {
         if n == 0 {
             return;
         }
 
         self.bus_cycles = self.bus_cycles.wrapping_add(n as u64);
+        self.pending_tick = self.pending_tick.wrapping_add(n);
+
+        self.video_cycle_debt = self.video_cycle_debt.saturating_add(n);
+    }
+}
+
+impl Memory {
+    #[inline]
+    pub(crate) fn flush_pending_ticks(&mut self) {
+        let n = self.pending_tick;
+        if n == 0 {
+            return;
+        }
+        self.pending_tick = 0;
+
+        self.apu.step(n);
 
         let timer_overflow = self.timers.step(n);
+        if timer_overflow == 0 {
+            return;
+        }
         for i in 0..4 {
             if timer_overflow & (1 << i) != 0 && self.timers.timer_irq_enabled(i) {
                 self.interrupt.request(Timers::irq_type(i));
@@ -351,10 +378,6 @@ impl Bus for Memory {
                 }
             }
         }
-
-        self.apu.step(n);
-
-        self.video_cycle_debt = self.video_cycle_debt.saturating_add(n);
     }
 }
 
@@ -578,6 +601,7 @@ mod tests {
         let mut m = build_memory();
         m.write_byte(0x0400_0102, 0x80);
         m.tick(50);
+        m.flush_pending_ticks();
         let lo = m.read_byte(0x0400_0100);
         let hi = m.read_byte(0x0400_0101);
         let counter = (lo as u16) | ((hi as u16) << 8);

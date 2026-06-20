@@ -16,9 +16,17 @@ pub const CYCLES_PER_FRAME: u32 = 280896;
 pub const FB_WIDTH: usize = 240;
 pub const FB_HEIGHT: usize = 160;
 
+#[derive(Default, Clone, Copy)]
+pub struct FrameProfile {
+    pub instructions: u64,
+    pub cycles: u64,
+    pub halt_steps: u64,
+}
+
 pub struct GBA {
     cpu: CPU,
     memory: Memory,
+    pub last_profile: FrameProfile,
 }
 
 impl GBA {
@@ -30,7 +38,7 @@ impl GBA {
         cpu.pipeline[1] = cpu.fetch(&mut memory);
         cpu.pipeline[2] = cpu.fetch(&mut memory);
 
-        Self { cpu, memory }
+        Self { cpu, memory, last_profile: FrameProfile::default() }
     }
 
     #[must_use]
@@ -53,7 +61,7 @@ impl GBA {
         cpu.pipeline[1] = cpu.fetch(&mut memory);
         cpu.pipeline[2] = cpu.fetch(&mut memory);
 
-        Self { cpu, memory }
+        Self { cpu, memory, last_profile: FrameProfile::default() }
     }
 
     pub fn get_cpu(&self) -> &CPU {
@@ -105,6 +113,7 @@ impl GBA {
         }
 
         if power != PowerMode::Stop {
+            self.memory.flush_pending_ticks();
             self.drain_events();
         }
 
@@ -118,10 +127,40 @@ impl GBA {
     }
 
     pub fn run_frame(&mut self) {
-        let target = self.memory.bus_cycles.wrapping_add(CYCLES_PER_FRAME as u64);
+        let start_cycles = self.memory.bus_cycles;
+        let target = start_cycles.wrapping_add(CYCLES_PER_FRAME as u64);
+        let mut prof = FrameProfile::default();
         while self.memory.bus_cycles < target {
-            self.step_one_instruction();
+            let power = self.memory.system.get_power_mode();
+            if power == PowerMode::Active {
+                let pc = self.cpu.reg[crate::cpu::cpu::PC_INDEX];
+                self.memory.bios_readable = pc < 0x0000_4000;
+                self.cpu.step(&mut self.memory);
+                prof.instructions += 1;
+            } else if power != PowerMode::Stop {
+                let frame_left = (target - self.memory.bus_cycles) as u32;
+                let video_left = self.memory.video.cycles_to_next_event();
+                let mut batch = frame_left.min(video_left);
+                if let Some(t) = self.memory.timers.cycles_to_next_overflow() {
+                    batch = batch.min(t);
+                }
+                <Memory as Bus>::tick(&mut self.memory, batch.max(1));
+                prof.halt_steps += 1;
+            }
+            if power != PowerMode::Stop {
+                self.memory.flush_pending_ticks();
+                self.drain_events();
+            }
+            let irq_accepted = self
+                .memory
+                .interrupt
+                .step(&mut self.cpu, &mut self.memory.system);
+            if irq_accepted {
+                self.cpu.flush_pipeline(&mut self.memory);
+            }
         }
+        prof.cycles = self.memory.bus_cycles.wrapping_sub(start_cycles);
+        self.last_profile = prof;
     }
 
     pub fn read_byte(&self, addr: u32) -> u8 {
@@ -148,8 +187,12 @@ impl GBA {
         }
     }
 
-    pub fn drain_audio(&mut self) -> Vec<(i16, i16)> {
-        self.memory.apu.drain_samples()
+    pub fn audio_samples(&self) -> &[(i16, i16)] {
+        self.memory.apu.samples()
+    }
+
+    pub fn clear_audio(&mut self) {
+        self.memory.apu.clear_samples();
     }
 
     pub fn bus_cycles(&self) -> u64 {

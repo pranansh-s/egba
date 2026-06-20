@@ -153,6 +153,15 @@ impl Video {
         (event, irq)
     }
 
+    pub(crate) fn cycles_to_next_event(&self) -> u32 {
+        let next = if self.dot_cycle < HDRAW_CYCLES {
+            HDRAW_CYCLES - self.dot_cycle
+        } else {
+            SCANLINE_CYCLES - self.dot_cycle
+        };
+        next.max(1)
+    }
+
     pub(crate) fn step_n(
         &mut self,
         cycles: u32,

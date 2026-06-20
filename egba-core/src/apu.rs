@@ -177,10 +177,12 @@ impl Apu {
         (left, right)
     }
 
-    pub(crate) fn drain_samples(&mut self) -> Vec<(i16, i16)> {
-        let mut replacement = Vec::with_capacity(self.sample_buffer.capacity().max(1024));
-        std::mem::swap(&mut self.sample_buffer, &mut replacement);
-        replacement
+    pub(crate) fn samples(&self) -> &[(i16, i16)] {
+        &self.sample_buffer
+    }
+
+    pub(crate) fn clear_samples(&mut self) {
+        self.sample_buffer.clear();
     }
 
     fn update_soundcnt_h(&mut self) {

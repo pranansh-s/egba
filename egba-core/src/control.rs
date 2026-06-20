@@ -93,10 +93,26 @@ pub(crate) enum PowerMode {
     Stop,
 }
 
-#[derive(Default)]
 pub(crate) struct SystemControl {
     waitcnt: u16,
     power: PowerMode,
+    ws_n: [u32; 3],
+    ws_s: [u32; 3],
+    sram_n: u32,
+}
+
+impl Default for SystemControl {
+    fn default() -> Self {
+        let mut s = Self {
+            waitcnt: 0,
+            power: PowerMode::default(),
+            ws_n: [0; 3],
+            ws_s: [0; 3],
+            sram_n: 0,
+        };
+        s.recompute_waitcnt();
+        s
+    }
 }
 
 impl SystemControl {
@@ -110,47 +126,7 @@ impl SystemControl {
         self.power
     }
 
-    fn sram_wait(&self) -> u32 {
-        Self::ws_n(self.waitcnt.bit_range(0..2) as u32)
-    }
-
-    fn ws0_n(&self) -> u32 {
-        Self::ws_n(self.waitcnt.bit_range(2..4) as u32)
-    }
-
-    fn ws0_s(&self) -> u32 {
-        if self.waitcnt.bit(4) {
-            1
-        } else {
-            2
-        }
-    }
-
-    fn ws1_n(&self) -> u32 {
-        Self::ws_n(self.waitcnt.bit_range(5..7) as u32)
-    }
-
-    fn ws1_s(&self) -> u32 {
-        if self.waitcnt.bit(7) {
-            1
-        } else {
-            4
-        }
-    }
-
-    fn ws2_n(&self) -> u32 {
-        Self::ws_n(self.waitcnt.bit_range(8..10) as u32)
-    }
-
-    fn ws2_s(&self) -> u32 {
-        if self.waitcnt.bit(10) {
-            1
-        } else {
-            8
-        }
-    }
-
-    fn ws_n(idx: u32) -> u32 {
+    fn ws_n_lut(idx: u32) -> u32 {
         match idx {
             0 => 4,
             1 => 3,
@@ -159,8 +135,32 @@ impl SystemControl {
         }
     }
 
+    fn recompute_waitcnt(&mut self) {
+        let w = self.waitcnt;
+        self.sram_n = Self::ws_n_lut((w & 0b11) as u32);
+        self.ws_n[0] = Self::ws_n_lut(((w >> 2) & 0b11) as u32);
+        self.ws_s[0] = if (w >> 4) & 1 != 0 { 1 } else { 2 };
+        self.ws_n[1] = Self::ws_n_lut(((w >> 5) & 0b11) as u32);
+        self.ws_s[1] = if (w >> 7) & 1 != 0 { 1 } else { 4 };
+        self.ws_n[2] = Self::ws_n_lut(((w >> 8) & 0b11) as u32);
+        self.ws_s[2] = if (w >> 10) & 1 != 0 { 1 } else { 8 };
+    }
+
+    #[inline]
+    fn rom_bank(addr: u32) -> Option<usize> {
+        match (addr >> 24) & 0xF {
+            0x8 | 0x9 => Some(0),
+            0xA | 0xB => Some(1),
+            0xC | 0xD => Some(2),
+            _ => None,
+        }
+    }
+
+    #[inline]
     pub(crate) fn rom_access_cycles(&self, addr: u32, width: u32) -> u32 {
-        let (n, s) = self.rom_ws(addr);
+        let bank = Self::rom_bank(addr).unwrap_or(0);
+        let n = self.ws_n[bank];
+        let s = self.ws_s[bank];
         if width >= 4 {
             (1 + n) + (1 + s)
         } else {
@@ -168,8 +168,10 @@ impl SystemControl {
         }
     }
 
+    #[inline]
     pub(crate) fn rom_seq_cycles(&self, addr: u32, width: u32) -> u32 {
-        let (_, s) = self.rom_ws(addr);
+        let bank = Self::rom_bank(addr).unwrap_or(0);
+        let s = self.ws_s[bank];
         if width >= 4 {
             2 * (1 + s)
         } else {
@@ -177,20 +179,10 @@ impl SystemControl {
         }
     }
 
-    fn rom_ws(&self, addr: u32) -> (u32, u32) {
-        let region = (addr >> 24) & 0xF;
-        match region {
-            0x08 | 0x09 => (self.ws0_n(), self.ws0_s()),
-            0x0A | 0x0B => (self.ws1_n(), self.ws1_s()),
-            0x0C | 0x0D => (self.ws2_n(), self.ws2_s()),
-            _ => (0, 0),
-        }
-    }
-
+    #[inline]
     pub(crate) fn sram_access_cycles(&self) -> u32 {
-        1 + self.sram_wait()
+        1 + self.sram_n
     }
-
 }
 
 impl Bus for SystemControl {
@@ -206,9 +198,11 @@ impl Bus for SystemControl {
         match addr {
             0x204 => {
                 self.waitcnt.set_bit_range(0..8, value as u16);
+                self.recompute_waitcnt();
             }
             0x205 => {
                 self.waitcnt.set_bit_range(8..16, value as u16);
+                self.recompute_waitcnt();
             }
             0x301 => {
                 self.power = match value.bit(7) {
