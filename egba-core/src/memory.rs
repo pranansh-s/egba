@@ -159,6 +159,92 @@ impl Bus for Memory {
         }
     }
 
+    fn read_hword(&self, addr: u32) -> u16 {
+        let addr = addr & !0b1;
+        match addr {
+            0x0200_0000..=0x02FF_FFFF => {
+                let off = (addr & 0x3_FFFF) as usize;
+                u16::from_le_bytes([self.ewram[off], self.ewram[off + 1]])
+            }
+            0x0300_0000..=0x03FF_FFFF => {
+                let off = (addr & 0x7FFF) as usize;
+                u16::from_le_bytes([self.iwram[off], self.iwram[off + 1]])
+            }
+            0x0500_0000..=0x05FF_FFFF => {
+                let off = (addr & 0x3FE) as usize;
+                u16::from_le_bytes([self.video.palette[off], self.video.palette[off + 1]])
+            }
+            0x0600_0000..=0x06FF_FFFF => {
+                let mirror = addr & 0x1_FFFF;
+                let eff = if mirror >= 0x1_8000 { mirror - 0x8000 } else { mirror } as usize;
+                u16::from_le_bytes([self.video.vram[eff], self.video.vram[eff + 1]])
+            }
+            0x0700_0000..=0x07FF_FFFF => {
+                let off = (addr & 0x3FE) as usize;
+                u16::from_le_bytes([self.video.oam[off], self.video.oam[off + 1]])
+            }
+            _ => u16::from_le_bytes([self.read_byte(addr), self.read_byte(addr.wrapping_add(1))]),
+        }
+    }
+
+    fn read_word(&self, addr: u32) -> u32 {
+        let addr = addr & !0b11;
+        match addr {
+            0x0200_0000..=0x02FF_FFFF => {
+                let off = (addr & 0x3_FFFF) as usize;
+                u32::from_le_bytes([
+                    self.ewram[off],
+                    self.ewram[off + 1],
+                    self.ewram[off + 2],
+                    self.ewram[off + 3],
+                ])
+            }
+            0x0300_0000..=0x03FF_FFFF => {
+                let off = (addr & 0x7FFF) as usize;
+                u32::from_le_bytes([
+                    self.iwram[off],
+                    self.iwram[off + 1],
+                    self.iwram[off + 2],
+                    self.iwram[off + 3],
+                ])
+            }
+            0x0500_0000..=0x05FF_FFFF => {
+                let off = (addr & 0x3FC) as usize;
+                u32::from_le_bytes([
+                    self.video.palette[off],
+                    self.video.palette[off + 1],
+                    self.video.palette[off + 2],
+                    self.video.palette[off + 3],
+                ])
+            }
+            0x0600_0000..=0x06FF_FFFF => {
+                let mirror = addr & 0x1_FFFF;
+                let eff = if mirror >= 0x1_8000 { mirror - 0x8000 } else { mirror } as usize;
+                u32::from_le_bytes([
+                    self.video.vram[eff],
+                    self.video.vram[eff + 1],
+                    self.video.vram[eff + 2],
+                    self.video.vram[eff + 3],
+                ])
+            }
+            0x0700_0000..=0x07FF_FFFF => {
+                let off = (addr & 0x3FC) as usize;
+                u32::from_le_bytes([
+                    self.video.oam[off],
+                    self.video.oam[off + 1],
+                    self.video.oam[off + 2],
+                    self.video.oam[off + 3],
+                ])
+            }
+            _ => u32::from_le_bytes([
+                self.read_byte(addr),
+                self.read_byte(addr.wrapping_add(1)),
+                self.read_byte(addr.wrapping_add(2)),
+                self.read_byte(addr.wrapping_add(3)),
+            ]),
+        }
+    }
+
     fn write_hword(&mut self, addr: u32, value: u16) {
         match addr {
             0x0500_0000..=0x05FF_FFFF => {
@@ -473,6 +559,96 @@ mod tests {
         m.write_byte(0x0400_00DF, 0x80);
         // Bus read of the same byte must reflect what DMA stored.
         assert_eq!(m.read_byte(0x0400_00DF), 0x80, "DMA3 enable byte must round-trip");
+    }
+
+    fn assert_word_matches_bytes(m: &Memory, addr: u32, label: &str) {
+        let aligned = addr & !0b11;
+        let expected = u32::from_le_bytes([
+            m.read_byte(aligned),
+            m.read_byte(aligned + 1),
+            m.read_byte(aligned + 2),
+            m.read_byte(aligned + 3),
+        ]);
+        assert_eq!(m.read_word(addr), expected, "{label} read_word");
+    }
+
+    fn assert_hword_matches_bytes(m: &Memory, addr: u32, label: &str) {
+        let aligned = addr & !0b1;
+        let expected =
+            u16::from_le_bytes([m.read_byte(aligned), m.read_byte(aligned + 1)]);
+        assert_eq!(m.read_hword(addr), expected, "{label} read_hword");
+    }
+
+    #[test]
+    fn fast_path_ewram_word_and_hword_match_byte_path() {
+        let mut m = build_memory();
+        m.write_word(0x0200_1000, 0xDEAD_BEEF);
+        assert_word_matches_bytes(&m, 0x0200_1000, "ewram aligned word");
+        assert_hword_matches_bytes(&m, 0x0200_1000, "ewram low hword");
+        assert_hword_matches_bytes(&m, 0x0200_1002, "ewram high hword");
+    }
+
+    #[test]
+    fn fast_path_iwram_word_and_hword_match_byte_path() {
+        let mut m = build_memory();
+        m.write_word(0x0300_0010, 0x1234_5678);
+        assert_word_matches_bytes(&m, 0x0300_0010, "iwram word");
+        assert_hword_matches_bytes(&m, 0x0300_0010, "iwram hword");
+    }
+
+    #[test]
+    fn fast_path_palette_word_and_hword_match_byte_path() {
+        let mut m = build_memory();
+        m.write_hword(0x0500_0000, 0xCAFE);
+        m.write_hword(0x0500_0002, 0xBABE);
+        assert_word_matches_bytes(&m, 0x0500_0000, "pal word");
+        assert_hword_matches_bytes(&m, 0x0500_0000, "pal hword");
+    }
+
+    #[test]
+    fn fast_path_vram_word_and_hword_match_byte_path() {
+        let mut m = build_memory();
+        m.write_hword(0x0600_2000, 0xFACE);
+        m.write_hword(0x0600_2002, 0x1337);
+        assert_word_matches_bytes(&m, 0x0600_2000, "vram word");
+        assert_hword_matches_bytes(&m, 0x0600_2000, "vram hword");
+    }
+
+    #[test]
+    fn fast_path_vram_mirror_region_match() {
+        let mut m = build_memory();
+        m.write_hword(0x0600_2000, 0xAA55);
+        // VRAM mirror: 0x06_0001_8000.. maps back to 0x06_0001_0000.. via -0x8000.
+        // Test region 0x0601_8000+ (mirror) reads same bytes after mirror correction.
+        let mirror_addr = 0x0602_0000;
+        assert_hword_matches_bytes(&m, mirror_addr, "vram mirror");
+    }
+
+    #[test]
+    fn fast_path_oam_word_and_hword_match_byte_path() {
+        let mut m = build_memory();
+        m.write_hword(0x0700_0000, 0xBEEF);
+        m.write_hword(0x0700_0002, 0xDEAD);
+        assert_word_matches_bytes(&m, 0x0700_0000, "oam word");
+        assert_hword_matches_bytes(&m, 0x0700_0000, "oam hword");
+    }
+
+    #[test]
+    fn fast_path_misaligned_addr_is_force_aligned() {
+        let mut m = build_memory();
+        m.write_word(0x0200_1000, 0xDEAD_BEEF);
+        // Misaligned address — fast path masks to aligned. Reading 0x0200_1003 still gives
+        // the word at 0x0200_1000, matching the default-trait alignment behavior.
+        assert_eq!(m.read_word(0x0200_1003), m.read_word(0x0200_1000));
+        assert_eq!(m.read_hword(0x0200_1001), m.read_hword(0x0200_1000));
+    }
+
+    #[test]
+    fn fast_path_ewram_mirrors() {
+        let mut m = build_memory();
+        m.write_word(0x0200_1000, 0x1122_3344);
+        // EWRAM mirrors every 256 KB. read_word at +256 KB must observe the same word.
+        assert_eq!(m.read_word(0x0204_1000), 0x1122_3344, "ewram mirror");
     }
 
     #[test]

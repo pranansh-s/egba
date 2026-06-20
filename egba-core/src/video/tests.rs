@@ -262,4 +262,88 @@ mod tests {
 
         assert_eq!(v.internal_ref_x[0], 256);
     }
+
+    // =========================================================================
+    // step_n parity vs step (cycle-batched fast path must match per-cycle)
+    // =========================================================================
+
+    fn run_frame_one_cycle_at_a_time(v: &mut Video) {
+        // One frame = 228 scanlines × 1232 cycles = 280896 cycles.
+        for _ in 0..280896u32 {
+            v.step();
+        }
+    }
+
+    fn run_frame_via_step_n(v: &mut Video, chunk: u32) {
+        let mut left = 280896u32;
+        while left > 0 {
+            let take = left.min(chunk);
+            v.step_n(take, |_, _| {});
+            left -= take;
+        }
+    }
+
+    #[test]
+    fn step_n_matches_step_in_chunks_of_100() {
+        let mut a = make_video();
+        let mut b = make_video();
+        run_frame_one_cycle_at_a_time(&mut a);
+        run_frame_via_step_n(&mut b, 100);
+        assert_eq!(a.vcount, b.vcount, "vcount diverged");
+        assert_eq!(a.dot_cycle, b.dot_cycle, "dot_cycle diverged");
+        assert_eq!(a.dispstat, b.dispstat, "dispstat diverged");
+    }
+
+    #[test]
+    fn step_n_matches_step_in_chunks_of_1232() {
+        let mut a = make_video();
+        let mut b = make_video();
+        run_frame_one_cycle_at_a_time(&mut a);
+        run_frame_via_step_n(&mut b, 1232);
+        assert_eq!(a.vcount, b.vcount);
+        assert_eq!(a.dot_cycle, b.dot_cycle);
+        assert_eq!(a.dispstat, b.dispstat);
+    }
+
+    #[test]
+    fn step_n_emits_hblank_and_vblank_event_counts() {
+        // A full frame = 228 HBlank-edge events (one per scanline) + 1 VBlank.
+        // Note: 160 of the HBlank edges happen during HDraw (-> HBlank event);
+        // 68 happen during VBlank (-> HBlankInVBlank event).
+        let mut v = make_video();
+        let mut hblank = 0u32;
+        let mut hblank_in_vblank = 0u32;
+        let mut vblank = 0u32;
+        v.step_n(280896, |ev, _| {
+            use crate::video::VideoEvent::*;
+            match ev {
+                HBlank => hblank += 1,
+                HBlankInVBlank => hblank_in_vblank += 1,
+                VBlank => vblank += 1,
+                None => {}
+            }
+        });
+        assert_eq!(hblank, 160, "one HBlank event per visible line");
+        assert_eq!(hblank_in_vblank, 68, "one HBlankInVBlank per vblank line");
+        assert_eq!(vblank, 1, "single VBlank per frame");
+    }
+
+    #[test]
+    fn step_n_handles_takes_smaller_than_boundary() {
+        let mut a = make_video();
+        let mut b = make_video();
+        for _ in 0..961u32 {
+            a.step();
+        }
+        // Drive b in chunks of 7 — uneven divisor of HDRAW_CYCLES.
+        let mut left = 961u32;
+        while left > 0 {
+            let take = left.min(7);
+            b.step_n(take, |_, _| {});
+            left -= take;
+        }
+        assert_eq!(a.vcount, b.vcount);
+        assert_eq!(a.dot_cycle, b.dot_cycle);
+        assert_eq!(a.dispstat, b.dispstat);
+    }
 }

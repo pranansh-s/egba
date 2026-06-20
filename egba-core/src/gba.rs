@@ -62,15 +62,26 @@ impl GBA {
 
     fn drain_events(&mut self) {
         let debt = std::mem::take(&mut self.memory.video_cycle_debt);
-        for _ in 0..debt {
-            let (event, irq) = self.memory.video.step();
-            if let Some(irq) = irq {
-                self.memory.interrupt.request(irq);
-            }
-            match event {
-                VideoEvent::HBlank => self.run_dma(DmaEvent::HBlank),
-                VideoEvent::VBlank => self.run_dma(DmaEvent::VBlank),
-                _ => {}
+        if debt > 0 {
+            let mut events: [(VideoEvent, Option<crate::control::InterruptType>); 8] =
+                [(VideoEvent::None, None); 8];
+            let mut n = 0usize;
+            self.memory.video.step_n(debt, |ev, irq| {
+                if n < events.len() {
+                    events[n] = (ev, irq);
+                    n += 1;
+                }
+            });
+            for i in 0..n {
+                let (event, irq) = events[i];
+                if let Some(irq) = irq {
+                    self.memory.interrupt.request(irq);
+                }
+                match event {
+                    VideoEvent::HBlank => self.run_dma(DmaEvent::HBlank),
+                    VideoEvent::VBlank => self.run_dma(DmaEvent::VBlank),
+                    _ => {}
+                }
             }
         }
 
@@ -145,7 +156,14 @@ impl GBA {
         self.memory.bus_cycles
     }
 
+    pub fn save_backup(&self) {
+        self.memory.cartridge.save();
+    }
+
     fn run_dma(&mut self, event: DmaEvent) {
+        if !self.memory.dma.any_running() {
+            return;
+        }
         let mut dma = std::mem::take(&mut self.memory.dma);
         let irq_flags = dma.run(event, &mut self.memory);
         self.memory.dma = dma;

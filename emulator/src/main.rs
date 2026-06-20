@@ -19,13 +19,16 @@ fn run(ui: &mut EgbaUI, gba: &mut GBA, debug: bool) {
         .get_event_pump()
         .expect("Failed to create SDL2 event pump");
 
+    let mut next_frame_at = Instant::now() + FRAME_DURATION;
+    let mut fps_window_start = Instant::now();
+    let mut fps_window_frames: u32 = 0;
+
     '_game: loop {
-        let frame_start = Instant::now();
-        
         for event in event_pump.poll_iter() {
             match event {
                 Event::Quit { .. } => {
                     println!("Quit event received. Exiting.");
+                    gba.save_backup();
                     return;
                 }
                 Event::KeyUp {
@@ -33,6 +36,7 @@ fn run(ui: &mut EgbaUI, gba: &mut GBA, debug: bool) {
                     ..
                 } => {
                     println!("Escape key pressed. Exiting.");
+                    gba.save_backup();
                     return;
                 }
                 _ => {}
@@ -48,15 +52,30 @@ fn run(ui: &mut EgbaUI, gba: &mut GBA, debug: bool) {
         }
 
         gba.run_frame();
-
         ui.render_frame(gba.framebuffer());
-
         let audio_samples = gba.drain_audio();
         ui.queue_audio(&audio_samples);
 
-        let elapsed = frame_start.elapsed();
-        if elapsed < FRAME_DURATION {
-            std::thread::sleep(FRAME_DURATION - elapsed);
+        fps_window_frames += 1;
+        let elapsed = fps_window_start.elapsed();
+        if elapsed >= Duration::from_secs(1) {
+            let fps = fps_window_frames as f64 / elapsed.as_secs_f64();
+            eprintln!("fps: {:.1}", fps);
+            fps_window_frames = 0;
+            fps_window_start = Instant::now();
+        }
+
+        let now = Instant::now();
+        if now < next_frame_at {
+            std::thread::sleep(next_frame_at - now);
+            next_frame_at += FRAME_DURATION;
+        } else {
+            let behind = now - next_frame_at;
+            if behind > FRAME_DURATION * 4 {
+                next_frame_at = now + FRAME_DURATION;
+            } else {
+                next_frame_at += FRAME_DURATION;
+            }
         }
     }
 }
@@ -218,6 +237,7 @@ fn main() {
                 std::process::exit(1);
             });
         }
+        egba.save_backup();
         return;
     }
 

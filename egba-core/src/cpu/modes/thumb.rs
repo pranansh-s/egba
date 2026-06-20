@@ -35,7 +35,7 @@ impl CPU {
             ),
 
             "0100_00??_????_????" => {
-                self.thumb_format4(bit_r!(inst, 6..10), bit_r!(inst, 3..6), bit_r!(inst, 0..3))
+                self.thumb_format4(bus, bit_r!(inst, 6..10), bit_r!(inst, 3..6), bit_r!(inst, 0..3))
             }
             "0100_01??_????_????" => self.thumb_format5(
                 bus,
@@ -151,7 +151,7 @@ impl CPU {
         self.set_NZ(res);
     }
 
-    fn thumb_format4(&mut self, opcode: usize, rs: usize, rd: usize) {
+    fn thumb_format4(&mut self, bus: &mut impl Bus, opcode: usize, rs: usize, rd: usize) {
         let op = self.reg[rd];
         let op2 = self.reg[rs];
 
@@ -171,6 +171,7 @@ impl CPU {
             0b1100 => self.ORR(op, op2),
             0b1101 => {
                 self.cpsr.c_condition_bit = false;
+                bus.tick(Self::mul_m_cycles(op2, true));
                 op.wrapping_mul(op2)
             }
             0b1110 => self.BIC(op, op2),

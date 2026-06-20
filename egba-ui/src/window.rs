@@ -87,10 +87,14 @@ pub struct EgbaUI {
     _texture_creator: TextureCreator<WindowContext>,
     texture: Texture,
     dest_rect: Rect,
+    audio_buf: Vec<i16>,
+    pixel_buf: Vec<u8>,
 }
 
 impl EgbaUI {
     pub fn new() -> Result<Self, EgbaUIError> {
+        sdl2::hint::set("SDL_HINT_RENDER_DRIVER", "metal");
+        sdl2::hint::set("SDL_RENDER_VSYNC", "0");
         let context = sdl2::init().map_err(|e| EgbaUIError::SdlInitError(e.to_string()))?;
         let video = context
             .video()
@@ -98,14 +102,12 @@ impl EgbaUI {
 
         let window = video
             .window("EGBA", WIDTH * SCALE, HEIGHT * SCALE)
-            .opengl()
             .position_centered()
             .build()
             .map_err(|e| EgbaUIError::WindowCreationError(e.to_string()))?;
         let mut canvas = window
             .into_canvas()
             .accelerated()
-            .present_vsync()
             .build()
             .map_err(|e| EgbaUIError::CanvasCreationError(e.to_string()))?;
 
@@ -146,6 +148,8 @@ impl EgbaUI {
             _texture_creator: texture_creator,
             texture,
             dest_rect: Rect::new(0, 0, WIDTH * SCALE, HEIGHT * SCALE),
+            audio_buf: Vec::with_capacity(4096),
+            pixel_buf: vec![0u8; (WIDTH * HEIGHT * 4) as usize],
         })
     }
 
@@ -154,22 +158,13 @@ impl EgbaUI {
     }
 
     pub fn render_frame(&mut self, framebuffer: &[u32]) {
+        for (out, &px) in self.pixel_buf.chunks_exact_mut(4).zip(framebuffer.iter()) {
+            out.copy_from_slice(&px.to_le_bytes());
+        }
         self.texture
-            .with_lock(None, |buffer: &mut [u8], pitch: usize| {
-                for y in 0..HEIGHT as usize {
-                    let row = &mut buffer[y * pitch..y * pitch + (WIDTH as usize) * 4];
-                    let src = &framebuffer[y * WIDTH as usize..(y + 1) * WIDTH as usize];
-                    for (i, &px) in src.iter().enumerate() {
-                        row[i * 4] = (px & 0xFF) as u8;
-                        row[i * 4 + 1] = ((px >> 8) & 0xFF) as u8;
-                        row[i * 4 + 2] = ((px >> 16) & 0xFF) as u8;
-                        row[i * 4 + 3] = 0;
-                    }
-                }
-            })
-            .expect("Failed to lock texture");
+            .update(None, &self.pixel_buf, (WIDTH * 4) as usize)
+            .expect("Failed to update texture");
 
-        self.canvas.clear();
         self.canvas
             .copy(&self.texture, None, Some(self.dest_rect))
             .expect("Failed to copy texture to canvas");
@@ -188,7 +183,12 @@ impl EgbaUI {
         if self.audio_device.size() > AUDIO_MAX_QUEUED_BYTES {
             self.audio_device.clear();
         }
-        let interleaved: Vec<i16> = samples.iter().flat_map(|&(l, r)| [l, r]).collect();
-        let _ = self.audio_device.queue_audio(&interleaved);
+        self.audio_buf.clear();
+        self.audio_buf.reserve(samples.len() * 2);
+        for &(l, r) in samples {
+            self.audio_buf.push(l);
+            self.audio_buf.push(r);
+        }
+        let _ = self.audio_device.queue_audio(&self.audio_buf);
     }
 }

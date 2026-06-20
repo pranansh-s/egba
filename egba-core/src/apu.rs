@@ -146,14 +146,14 @@ impl Apu {
         let ds_b = self.ds_b.current_sample as i16;
 
         let ds_a_scaled = if self.ds_a.volume_shift == 1 {
-            ds_a * 2
-        } else {
             ds_a
+        } else {
+            ds_a >> 1
         };
         let ds_b_scaled = if self.ds_b.volume_shift == 1 {
-            ds_b * 2
-        } else {
             ds_b
+        } else {
+            ds_b >> 1
         };
 
         let mut left: i16 = 0;
@@ -172,11 +172,15 @@ impl Apu {
             right += ds_b_scaled;
         }
 
-        (left.clamp(-0x200, 0x1FF), right.clamp(-0x200, 0x1FF))
+        let left = (left.clamp(-0x200, 0x1FF) as i32 * 64) as i16;
+        let right = (right.clamp(-0x200, 0x1FF) as i32 * 64) as i16;
+        (left, right)
     }
 
     pub(crate) fn drain_samples(&mut self) -> Vec<(i16, i16)> {
-        std::mem::take(&mut self.sample_buffer)
+        let mut replacement = Vec::with_capacity(self.sample_buffer.capacity().max(1024));
+        std::mem::swap(&mut self.sample_buffer, &mut replacement);
+        replacement
     }
 
     fn update_soundcnt_h(&mut self) {
@@ -189,6 +193,54 @@ impl Apu {
         self.ds_b.enable_r = (h >> 12) & 1 != 0;
         self.ds_b.enable_l = (h >> 13) & 1 != 0;
         self.ds_b.timer_sel = ((h >> 14) & 1) as u8;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn setup_apu(soundcnt_h: u16) -> Apu {
+        let mut apu = Apu::default();
+        // master enable
+        apu.write_byte(0x084, 0x80);
+        // soundcnt_h (sets volumes and L/R enables via update_soundcnt_h on byte 3 write)
+        apu.write_byte(0x082, soundcnt_h as u8);
+        apu.write_byte(0x083, (soundcnt_h >> 8) as u8);
+        apu
+    }
+
+    #[test]
+    fn apu_volume_shift_zero_halves_dsa() {
+        // DSA volume=0 (50%), DSA L+R enabled, DSB disabled.
+        // soundcnt_h bits: 8=DSA_R, 9=DSA_L, 10=DSA_timer (=0)
+        let h = (1u16 << 8) | (1u16 << 9);
+        let mut apu = setup_apu(h);
+        apu.ds_a.current_sample = 100;
+        let (l, r) = apu.mix_sample();
+        // DSA mixed at 50% -> 100 >> 1 = 50, then * 64 = 3200
+        assert_eq!(l, 50 * 64, "left scaled 50% then i16-amplified");
+        assert_eq!(r, 50 * 64, "right scaled 50% then i16-amplified");
+    }
+
+    #[test]
+    fn apu_volume_shift_one_keeps_dsa() {
+        // DSA volume=1 (100%) -> bit 2 of soundcnt_h
+        let h = (1u16 << 2) | (1u16 << 8) | (1u16 << 9);
+        let mut apu = setup_apu(h);
+        apu.ds_a.current_sample = 100;
+        let (l, r) = apu.mix_sample();
+        assert_eq!(l, 100 * 64, "left at 100% then i16-amplified");
+        assert_eq!(r, 100 * 64, "right at 100% then i16-amplified");
+    }
+
+    #[test]
+    fn apu_timer_overflow_pops_fifo() {
+        let mut apu = setup_apu((1u16 << 8) | (1u16 << 9));
+        apu.write_fifo(0, 0x04030201);
+        let _ = apu.on_timer_overflow(0);
+        assert_eq!(apu.ds_a.current_sample, 0x01, "first byte popped on T0 overflow");
+        assert_eq!(apu.ds_a.fifo.len(), 3, "three samples remain");
     }
 }
 

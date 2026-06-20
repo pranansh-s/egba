@@ -27,6 +27,7 @@ impl CPU {
                 self.arm_B_BL(bus, inst.bit(24), bit_r!(inst, 0..24))
             }
             "0000_00??_????_????_????_1001_????" => self.arm_MUL_MLA(
+                bus,
                 inst.bit(21),
                 inst.bit(20),
                 bit_r!(inst, 16..20),
@@ -36,6 +37,7 @@ impl CPU {
             ),
 
             "0000_1???_????_????_????_1001_????" => self.arm_UMULL_UMLAL_SMULL_SMLAL(
+                bus,
                 inst.bit(22),
                 inst.bit(21),
                 inst.bit(20),
@@ -438,10 +440,48 @@ impl CPU {
         }
     }
 
-    fn arm_MUL_MLA(&mut self, a: bool, s: bool, rd: usize, rn: usize, rs: usize, rm: usize) {
+    pub(super) fn mul_m_cycles(rs: u32, signed: bool) -> u32 {
+        if signed {
+            if rs & 0xFFFF_FF00 == 0 || rs & 0xFFFF_FF00 == 0xFFFF_FF00 {
+                1
+            } else if rs & 0xFFFF_0000 == 0 || rs & 0xFFFF_0000 == 0xFFFF_0000 {
+                2
+            } else if rs & 0xFF00_0000 == 0 || rs & 0xFF00_0000 == 0xFF00_0000 {
+                3
+            } else {
+                4
+            }
+        } else {
+            if rs & 0xFFFF_FF00 == 0 {
+                1
+            } else if rs & 0xFFFF_0000 == 0 {
+                2
+            } else if rs & 0xFF00_0000 == 0 {
+                3
+            } else {
+                4
+            }
+        }
+    }
+
+    fn arm_MUL_MLA(
+        &mut self,
+        bus: &mut impl Bus,
+        a: bool,
+        s: bool,
+        rd: usize,
+        rn: usize,
+        rs: usize,
+        rm: usize,
+    ) {
+        let rs_val = self.reg[rs];
         let acc = if a { self.reg[rn] } else { 0 };
-        let prod = self.reg[rm].wrapping_mul(self.reg[rs]).wrapping_add(acc);
+        let prod = self.reg[rm].wrapping_mul(rs_val).wrapping_add(acc);
         self.reg[rd] = prod;
+
+        let m = Self::mul_m_cycles(rs_val, true);
+        let extra = if a { 1 } else { 0 };
+        bus.tick(m + extra);
 
         if s {
             self.set_NZ(prod);
@@ -451,6 +491,7 @@ impl CPU {
 
     fn arm_UMULL_UMLAL_SMULL_SMLAL(
         &mut self,
+        bus: &mut impl Bus,
         u: bool,
         a: bool,
         s: bool,
@@ -459,21 +500,26 @@ impl CPU {
         rs: usize,
         rm: usize,
     ) {
+        let rs_val = self.reg[rs];
         let acc = if a {
             (self.reg[rd_hi] as u64) << 32 | (self.reg[rd_lo] as u64)
         } else {
             0
         };
         let prod = if u {
-            ((self.reg[rs] as i32 as i64).wrapping_mul(self.reg[rm] as i32 as i64) as u64)
+            ((rs_val as i32 as i64).wrapping_mul(self.reg[rm] as i32 as i64) as u64)
                 .wrapping_add(acc)
         } else {
-            (self.reg[rs] as u64)
+            (rs_val as u64)
                 .wrapping_mul(self.reg[rm] as u64)
                 .wrapping_add(acc)
         };
         self.reg[rd_hi] = (prod >> 32) as u32;
         self.reg[rd_lo] = prod as u32;
+
+        let m = Self::mul_m_cycles(rs_val, u);
+        let extra = 1 + if a { 1 } else { 0 };
+        bus.tick(m + extra);
 
         if s {
             self.set_NZ_64(prod);

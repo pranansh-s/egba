@@ -1054,4 +1054,172 @@ mod tests {
         let cpsr_after: u32 = cpu.cpsr.into();
         assert_eq!(cpsr_before, cpsr_after, "MRS must not alter CPSR");
     }
+
+    // =========================================================================
+    // Multiply timing (gbatek ARM7TDMI: MUL=1S+mI, MLA=1S+(m+1)I,
+    // UMULL/SMULL=1S+(m+1)I, UMLAL/SMLAL=1S+(m+2)I)
+    // =========================================================================
+
+    fn run_inst_ticks(inst: u32, setup: impl FnOnce(&mut CPU)) -> u32 {
+        let mut cpu = CPU::new();
+        let mut bus = TestBus::new(0x100);
+        bus.write_word_at(0x00, inst);
+        bus.write_word_at(0x04, 0xE3A0_0000);
+        bus.write_word_at(0x08, 0xE3A0_0000);
+
+        cpu.cpsr.operating_state = OperatingState::ARM;
+        cpu.reg[PC_INDEX] = 0x00;
+        setup(&mut cpu);
+        cpu.flush_pipeline(&mut bus);
+
+        let before = bus.ticks;
+        cpu.step(&mut bus);
+        bus.ticks - before
+    }
+
+    #[test]
+    fn arm_mul_timing_scales_with_rs_leading_bits() {
+        // MUL R3, R1, R2 = 0xE003_0291. Signed m: top 24 bits all 0 or all 1 -> 1,
+        // top 16 -> 2, top 8 -> 3, else -> 4. MUL extra=0 -> total internal = m.
+        let cases: [(u32, u32, &str); 5] = [
+            (0x0000_0000, 1, "Rs=0 -> m=1"),
+            (0xFFFF_FFFF, 1, "Rs=-1 (all ones) -> m=1 signed"),
+            (0x0000_0100, 2, "Rs bit 8 -> m=2"),
+            (0x0001_0000, 3, "Rs bit 16 -> m=3"),
+            (0x0100_0000, 4, "Rs bit 24 -> m=4"),
+        ];
+        let base = run_inst_ticks(0xE003_0291, |c| {
+            c.reg[1] = 1;
+            c.reg[2] = cases[0].0;
+        });
+        for (rs_val, m, label) in cases {
+            let ticks = run_inst_ticks(0xE003_0291, |c| {
+                c.reg[1] = 1;
+                c.reg[2] = rs_val;
+            });
+            let expected = base + (m - cases[0].1);
+            assert_eq!(ticks, expected, "{label}");
+        }
+    }
+
+    #[test]
+    fn arm_mla_costs_one_more_i_cycle_than_mul() {
+        // MLA R3, R1, R2, R0 = 0xE023_0291 (A=1 bit 21 set).
+        let mul = run_inst_ticks(0xE003_0291, |c| {
+            c.reg[1] = 1;
+            c.reg[2] = 0;
+        });
+        let mla = run_inst_ticks(0xE023_0291, |c| {
+            c.reg[1] = 1;
+            c.reg[2] = 0;
+            c.reg[0] = 0;
+        });
+        assert_eq!(mla, mul + 1, "MLA = MUL + 1 internal cycle");
+    }
+
+    #[test]
+    fn arm_umull_costs_one_more_i_cycle_than_mul() {
+        // UMULL RdLo=R3, RdHi=R4, Rm=R1, Rs=R2.
+        // Encoding: cond 0000_1 U A S RdHi RdLo Rs 1001 Rm.
+        // U=0 (unsigned), A=0, S=0, RdHi=4, RdLo=3, Rs=2, Rm=1.
+        // 1110 0000 1000 0100 0011 0010 1001 0001 = 0xE084_3291.
+        let mul = run_inst_ticks(0xE003_0291, |c| {
+            c.reg[1] = 1;
+            c.reg[2] = 0;
+        });
+        let umull = run_inst_ticks(0xE084_3291, |c| {
+            c.reg[1] = 1;
+            c.reg[2] = 0;
+        });
+        assert_eq!(umull, mul + 1, "UMULL = MUL + 1 internal cycle (long)");
+    }
+
+    #[test]
+    fn arm_umlal_costs_two_more_i_cycles_than_mul() {
+        // UMLAL: A=1, U=0. 1110 0000 1010 0100 0011 0010 1001 0001 = 0xE0A4_3291.
+        let mul = run_inst_ticks(0xE003_0291, |c| {
+            c.reg[1] = 1;
+            c.reg[2] = 0;
+        });
+        let umlal = run_inst_ticks(0xE0A4_3291, |c| {
+            c.reg[1] = 1;
+            c.reg[2] = 0;
+        });
+        assert_eq!(umlal, mul + 2, "UMLAL = MUL + 2 internal cycles");
+    }
+
+    fn run_thumb_inst_ticks(inst: u16, setup: impl FnOnce(&mut CPU)) -> u32 {
+        let mut cpu = CPU::new();
+        let mut bus = TestBus::new(0x100);
+        bus.write_hword_at(0x00, inst);
+        bus.write_hword_at(0x02, 0x46C0);
+        bus.write_hword_at(0x04, 0x46C0);
+
+        cpu.cpsr.operating_state = OperatingState::THUMB;
+        cpu.reg[PC_INDEX] = 0x00;
+        setup(&mut cpu);
+        cpu.flush_pipeline(&mut bus);
+
+        let before = bus.ticks;
+        cpu.step(&mut bus);
+        bus.ticks - before
+    }
+
+    #[test]
+    fn thumb_mul_timing_scales_with_rs_leading_bits() {
+        // THUMB MUL R0, R1: format 4, opcode=0b1101, Rs=R1, Rd=R0.
+        // 0100_00_1101_001_000 = 0x4348. ARM7TDMI: 1S + mI same as ARM MUL.
+        let cases: [(u32, u32, &str); 4] = [
+            (0x0000_0000, 1, "Rs=0 -> m=1"),
+            (0x0000_0100, 2, "Rs bit 8 -> m=2"),
+            (0x0001_0000, 3, "Rs bit 16 -> m=3"),
+            (0x0100_0000, 4, "Rs bit 24 -> m=4"),
+        ];
+        let base = run_thumb_inst_ticks(0x4348, |c| {
+            c.reg[0] = 1;
+            c.reg[1] = cases[0].0;
+        });
+        for (rs_val, m, label) in cases {
+            let ticks = run_thumb_inst_ticks(0x4348, |c| {
+                c.reg[0] = 1;
+                c.reg[1] = rs_val;
+            });
+            let expected = base + (m - cases[0].1);
+            assert_eq!(ticks, expected, "{label}");
+        }
+    }
+
+    #[test]
+    fn arm_smull_unsigned_m_uses_only_zero_check() {
+        // SMULL: U=1. 1110 0000 1100 0100 0011 0010 1001 0001 = 0xE0C4_3291.
+        // Signed Rs=0xFFFF_FFFF -> m=1. Unsigned Rs=0xFFFF_FFFF -> m=4.
+        // SMULL is signed so Rs=-1 should be m=1.
+        let smull_neg_one = run_inst_ticks(0xE0C4_3291, |c| {
+            c.reg[1] = 1;
+            c.reg[2] = 0xFFFF_FFFF;
+        });
+        let smull_zero = run_inst_ticks(0xE0C4_3291, |c| {
+            c.reg[1] = 1;
+            c.reg[2] = 0;
+        });
+        assert_eq!(
+            smull_neg_one, smull_zero,
+            "SMULL with Rs=-1 must cost same as Rs=0 (both m=1 signed)"
+        );
+
+        // UMULL with the same Rs=-1 should hit m=4 -> 3 more cycles than UMULL with Rs=0.
+        let umull_max = run_inst_ticks(0xE084_3291, |c| {
+            c.reg[1] = 1;
+            c.reg[2] = 0xFFFF_FFFF;
+        });
+        let umull_zero = run_inst_ticks(0xE084_3291, |c| {
+            c.reg[1] = 1;
+            c.reg[2] = 0;
+        });
+        assert_eq!(
+            umull_max,
+            umull_zero + 3,
+            "UMULL with Rs=-1 hits m=4 vs m=1 at Rs=0"
+        );
+    }
 }

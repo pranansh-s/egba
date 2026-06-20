@@ -153,6 +153,31 @@ impl Video {
         (event, irq)
     }
 
+    pub(crate) fn step_n(
+        &mut self,
+        cycles: u32,
+        mut sink: impl FnMut(VideoEvent, Option<InterruptType>),
+    ) {
+        let mut remaining = cycles;
+        while remaining > 0 {
+            let to_next = if self.dot_cycle < HDRAW_CYCLES {
+                HDRAW_CYCLES - self.dot_cycle
+            } else {
+                SCANLINE_CYCLES - self.dot_cycle
+            };
+            let take = remaining.min(to_next);
+            if take > 1 {
+                self.dot_cycle += take - 1;
+                remaining -= take - 1;
+            }
+            let (event, irq) = self.step();
+            remaining -= 1;
+            if !matches!(event, VideoEvent::None) || irq.is_some() {
+                sink(event, irq);
+            }
+        }
+    }
+
     pub(crate) fn framebuffer(&self) -> &[u32] {
         &self.frame_buffer
     }

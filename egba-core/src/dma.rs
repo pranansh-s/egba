@@ -66,6 +66,10 @@ pub(crate) struct Dma {
 }
 
 impl Dma {
+    pub(crate) fn any_running(&self) -> bool {
+        self.channels.iter().any(|c| c.enabled() && c.running)
+    }
+
     pub(crate) fn run(&mut self, event: DmaEvent, memory: &mut dyn DmaMemory) -> u8 {
         let mut irq_flags: u8 = 0;
 
@@ -287,6 +291,136 @@ impl Bus for Dma {
             }
             _ => {}
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct FakeMem {
+        src: Vec<u32>,
+        dst: Vec<u32>,
+        reads: Vec<u32>,
+        writes: Vec<(u32, u32)>,
+    }
+
+    impl DmaMemory for FakeMem {
+        fn dma_read_hword(&self, addr: u32) -> u16 {
+            (self.dma_read_word(addr) & 0xFFFF) as u16
+        }
+        fn dma_read_word(&self, addr: u32) -> u32 {
+            let idx = ((addr - self.src[0]) / 4) as usize;
+            self.src.get(idx + 1).copied().unwrap_or(0)
+        }
+        fn dma_write_hword(&mut self, addr: u32, val: u16) {
+            self.dma_write_word(addr, val as u32);
+        }
+        fn dma_write_word(&mut self, addr: u32, val: u32) {
+            self.writes.push((addr, val));
+            self.dst.push(val);
+        }
+    }
+
+    fn fake_mem(src_base: u32, words: &[u32]) -> FakeMem {
+        let mut src = vec![src_base];
+        src.extend_from_slice(words);
+        FakeMem {
+            src,
+            dst: vec![],
+            reads: vec![],
+            writes: vec![],
+        }
+    }
+
+    fn setup_dma3(dma: &mut Dma, src: u32, dst: u32, count: u16, ctrl_h: u16) {
+        let base: u32 = 0xD4;
+        for (i, &b) in src.to_le_bytes().iter().enumerate() {
+            dma.write_byte(base + i as u32, b);
+        }
+        for (i, &b) in dst.to_le_bytes().iter().enumerate() {
+            dma.write_byte(base + 4 + i as u32, b);
+        }
+        dma.write_byte(base + 8, count as u8);
+        dma.write_byte(base + 9, (count >> 8) as u8);
+        dma.write_byte(base + 10, ctrl_h as u8);
+        dma.write_byte(base + 11, (ctrl_h >> 8) as u8);
+    }
+
+    #[test]
+    fn dma3_immediate_word_copy_runs_on_immediate_event() {
+        let mut dma = Dma::default();
+        let mut mem = fake_mem(0x0800_0000, &[0xDEAD_BEEF, 0xCAFEBABE]);
+        // count=2 words, ctrl: enable(15) + 32bit(10) + immediate(12..14=0)
+        setup_dma3(&mut dma, 0x0800_0000, 0x0300_0000, 2, 0x8400);
+        let irq = dma.run(DmaEvent::Immediate, &mut mem);
+        assert_eq!(irq, 0, "DMA3 IRQ not requested (enable bit 14 = 0)");
+        assert_eq!(mem.writes.len(), 2, "two words written");
+        assert_eq!(mem.writes[0].0, 0x0300_0000);
+        assert_eq!(mem.writes[0].1, 0xDEAD_BEEF);
+        assert_eq!(mem.writes[1].0, 0x0300_0004);
+        assert_eq!(mem.writes[1].1, 0xCAFEBABE);
+    }
+
+    #[test]
+    fn dma_immediate_does_not_repeat() {
+        let mut dma = Dma::default();
+        let mut mem = fake_mem(0x0200_0000, &[1, 2, 3, 4]);
+        // count=2, immediate + repeat (bit 25 = 0x0200)
+        setup_dma3(&mut dma, 0x0200_0000, 0x0300_0000, 2, 0x8400 | 0x0200);
+        dma.run(DmaEvent::Immediate, &mut mem);
+        assert_eq!(mem.writes.len(), 2);
+        dma.run(DmaEvent::Immediate, &mut mem);
+        assert_eq!(
+            mem.writes.len(),
+            2,
+            "immediate DMA must not re-trigger even with repeat bit"
+        );
+    }
+
+    #[test]
+    fn dma3_vblank_repeat_reruns_on_each_vblank() {
+        let mut dma = Dma::default();
+        let mut mem = fake_mem(0x0200_0000, &[10, 20]);
+        // count=1, VBlank timing (12..14 = 01 -> 0x1000), repeat (0x0200), 32bit (0x0400), enable (0x8000)
+        setup_dma3(
+            &mut dma,
+            0x0200_0000,
+            0x0300_0000,
+            1,
+            0x8000 | 0x0400 | 0x1000 | 0x0200,
+        );
+        dma.run(DmaEvent::VBlank, &mut mem);
+        assert_eq!(mem.writes.len(), 1, "first VBlank");
+        dma.run(DmaEvent::VBlank, &mut mem);
+        assert_eq!(mem.writes.len(), 2, "repeat: second VBlank");
+    }
+
+    #[test]
+    fn dma3_irq_flag_when_enabled() {
+        let mut dma = Dma::default();
+        let mut mem = fake_mem(0x0200_0000, &[42]);
+        // enable + 32bit + immediate + IRQ-on-end (bit 14 = 0x4000)
+        setup_dma3(&mut dma, 0x0200_0000, 0x0300_0000, 1, 0x8400 | 0x4000);
+        let irq = dma.run(DmaEvent::Immediate, &mut mem);
+        assert_eq!(irq, 0b1000, "bit 3 = DMA3 IRQ flag");
+    }
+
+    #[test]
+    fn dma0_src_addr_mask_blocks_rom_region() {
+        // DMA0 src mask = 0x07FFFFFF. Source above 0x08000000 should be masked into internal area.
+        assert_eq!(Dma::src_addr_mask(0), 0x07FF_FFFF);
+        assert_eq!(Dma::src_addr_mask(1), 0x0FFF_FFFF);
+        assert_eq!(Dma::src_addr_mask(2), 0x0FFF_FFFF);
+        assert_eq!(Dma::src_addr_mask(3), 0x0FFF_FFFF);
+    }
+
+    #[test]
+    fn dma_dst_addr_mask_only_dma3_reaches_rom() {
+        assert_eq!(Dma::dst_addr_mask(0), 0x07FF_FFFF);
+        assert_eq!(Dma::dst_addr_mask(1), 0x07FF_FFFF);
+        assert_eq!(Dma::dst_addr_mask(2), 0x07FF_FFFF);
+        assert_eq!(Dma::dst_addr_mask(3), 0x0FFF_FFFF);
     }
 }
 

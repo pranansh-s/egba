@@ -40,7 +40,7 @@ impl Timers {
         let mut overflow_flags: u8 = 0;
 
         for i in 0..4 {
-            if !self.timers[i].enabled() || self.timers[i].cascade() {
+            if !self.timers[i].enabled() || (i > 0 && self.timers[i].cascade()) {
                 continue;
             }
 
@@ -97,6 +97,60 @@ impl Timers {
 
     pub(crate) fn timer_irq_enabled(&self, index: usize) -> bool {
         self.timers[index].irq_enabled()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn enable_timer(t: &mut Timers, idx: usize, control_low: u8, reload: u16) {
+        let base = 0x100 + (idx * 4) as u32;
+        t.write_byte(base, reload as u8);
+        t.write_byte(base + 1, (reload >> 8) as u8);
+        t.write_byte(base + 2, control_low);
+    }
+
+    #[test]
+    fn timer0_cascade_bit_is_ignored() {
+        // Per GBATEK: timer 0 has no upstream timer to cascade from; bit 2 ignored.
+        // With prescaler=1 and cascade bit set, timer 0 must still tick.
+        let cases: [(u8, u32, u16, &str); 2] = [
+            (0b1000_0000, 100, 100, "no cascade bit, prescaler 1"),
+            (0b1000_0100, 100, 100, "cascade bit set on T0 -> still ticks"),
+        ];
+        for (ctrl, cycles, expected, label) in cases {
+            let mut t = Timers::default();
+            enable_timer(&mut t, 0, ctrl, 0);
+            t.step(cycles);
+            assert_eq!(t.timers[0].counter, expected, "{label}");
+        }
+    }
+
+    #[test]
+    fn timer_overflow_reloads_and_cascades() {
+        let mut t = Timers::default();
+        // T0 prescaler=1, reload=0xFFFE -> overflows after 2 ticks; reloads 0xFFFE.
+        enable_timer(&mut t, 0, 0b1000_0000, 0xFFFE);
+        // T1 cascade enabled.
+        enable_timer(&mut t, 1, 0b1000_0100, 0);
+        let of = t.step(2);
+        assert_ne!(of & 1, 0, "T0 must overflow after 2 ticks");
+        assert_eq!(t.timers[0].counter, 0xFFFE, "T0 reloaded");
+        assert_eq!(t.timers[1].counter, 1, "T1 cascades on T0 overflow");
+    }
+
+    #[test]
+    fn timer_prescaler_64_emits_overflow_every_64_cycles() {
+        let mut t = Timers::default();
+        // prescaler=01 (64), enabled, reload=0xFFFF -> overflow each prescaled tick.
+        enable_timer(&mut t, 2, 0b1000_0001, 0xFFFF);
+        let of = t.step(64);
+        assert_ne!(of & (1 << 2), 0, "T2 must overflow once at 64 cycles");
+        let of = t.step(63);
+        assert_eq!(of & (1 << 2), 0, "T2 must not overflow within next 63 cycles");
+        let of = t.step(1);
+        assert_ne!(of & (1 << 2), 0, "T2 overflows at next 64-cycle boundary");
     }
 }
 

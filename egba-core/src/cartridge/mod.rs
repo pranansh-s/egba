@@ -1,17 +1,27 @@
 pub mod backup;
 
-use std::{fs, path::Path};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 
 use crate::{
     bus::Bus,
     rom::{InvalidROM, Rom},
 };
-use backup::{eeprom::EEPROM, flash::Flash, sram::SRAM, BackupMedia, BackupType};
+use backup::{eeprom::EEPROM, flash::Flash, sram::SRAM, BackupBuffer, BackupMedia, BackupType};
+
+#[derive(Clone, Copy)]
+enum EepromRange {
+    Full,
+    Last256,
+}
 
 pub struct Cartridge {
     rom: Rom,
     backup: Option<BackupMedia>,
-    eeprom_mask: Option<usize>,
+    eeprom_range: Option<EepromRange>,
+    sav_path: PathBuf,
 }
 
 impl Cartridge {
@@ -38,11 +48,11 @@ impl Cartridge {
             }
         };
 
-        let eeprom_mask = match &backup {
+        let eeprom_range = match &backup {
             Some(BackupMedia::Eeprom(_)) => Some(if rom.len() > 0x0100_0000 {
-                0x01ff_ff00
+                EepromRange::Last256
             } else {
-                0x0100_0000
+                EepromRange::Full
             }),
             _ => None,
         };
@@ -50,12 +60,26 @@ impl Cartridge {
         Ok(Self {
             rom,
             backup,
-            eeprom_mask,
+            eeprom_range,
+            sav_path: backup_path.to_path_buf(),
         })
     }
 
     fn eeprom_read(&self, addr: usize) -> bool {
-        self.eeprom_mask.is_some_and(|mask| (addr & mask) == mask)
+        match self.eeprom_range {
+            Some(EepromRange::Full) => (0x0D00_0000..=0x0DFF_FFFF).contains(&addr),
+            Some(EepromRange::Last256) => (0x0DFF_FF00..=0x0DFF_FFFF).contains(&addr),
+            None => false,
+        }
+    }
+
+    pub fn save(&self) {
+        match &self.backup {
+            Some(BackupMedia::Sram(m)) => m.save(&self.sav_path),
+            Some(BackupMedia::Flash(m)) => m.save(&self.sav_path),
+            Some(BackupMedia::Eeprom(m)) => m.save(&self.sav_path),
+            None => {}
+        }
     }
 }
 
@@ -101,5 +125,55 @@ impl Bus for Cartridge {
             },
             _ => {}
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn rom_with_id(id: &[u8], offset: usize, total_size: usize) -> Rom {
+        let mut buf = vec![0u8; total_size];
+        buf[offset..offset + id.len()].copy_from_slice(id);
+        Rom::new(&buf)
+    }
+
+    #[test]
+    fn eeprom_range_full_for_small_carts() {
+        let rom = rom_with_id(b"EEPROM_V100", 0xAC, 0x0080_0000);
+        let cart = Cartridge::new(rom, Path::new("/nonexistent/no.sav")).expect("cart");
+        assert!(cart.eeprom_read(0x0D00_0000), "EEPROM gate at 0x0D000000 start");
+        assert!(cart.eeprom_read(0x0DAB_CDEF), "EEPROM gate mid-range");
+        assert!(cart.eeprom_read(0x0DFF_FFFF), "EEPROM gate at top");
+        assert!(
+            !cart.eeprom_read(0x0900_0000),
+            "0x09000000 must NOT be intercepted (regression vs old bit-24 mask)"
+        );
+        assert!(
+            !cart.eeprom_read(0x0B00_0000),
+            "0x0B000000 must NOT be intercepted"
+        );
+        assert!(
+            !cart.eeprom_read(0x0CFF_FFFF),
+            "addresses below 0x0D000000 must fall through to ROM"
+        );
+    }
+
+    #[test]
+    fn eeprom_range_last_256_for_large_carts() {
+        let rom = rom_with_id(b"EEPROM_V100", 0xAC, 0x0180_0000);
+        let cart = Cartridge::new(rom, Path::new("/nonexistent/no.sav")).expect("cart");
+        assert!(!cart.eeprom_read(0x0D00_0000), ">16MB cart must NOT gate low EEPROM range");
+        assert!(!cart.eeprom_read(0x0DFF_FEFF), "just below last-256 must not gate");
+        assert!(cart.eeprom_read(0x0DFF_FF00), "last 256 bytes must gate (start)");
+        assert!(cart.eeprom_read(0x0DFF_FFFF), "last 256 bytes must gate (end)");
+    }
+
+    #[test]
+    fn no_eeprom_range_when_rom_lacks_id() {
+        let rom = Rom::new(&vec![0u8; 0x1000]);
+        let cart = Cartridge::new(rom, Path::new("/nonexistent/no.sav")).expect("cart");
+        assert!(!cart.eeprom_read(0x0D00_0000));
+        assert!(!cart.eeprom_read(0x0DFF_FFFF));
     }
 }
