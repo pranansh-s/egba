@@ -71,26 +71,24 @@ impl GBA {
     fn drain_events(&mut self) {
         let debt = std::mem::take(&mut self.memory.video_cycle_debt);
         if debt > 0 {
-            let mut events: [(VideoEvent, Option<crate::control::InterruptType>); 8] =
-                [(VideoEvent::None, None); 8];
-            let mut n = 0usize;
+            let mut events = std::mem::take(&mut self.memory.video_events);
+            events.clear();
             self.memory.video.step_n(debt, |ev, irq| {
-                if n < events.len() {
-                    events[n] = (ev, irq);
-                    n += 1;
-                }
+                events.push((ev, irq));
             });
-            for i in 0..n {
-                let (event, irq) = events[i];
+            for (event, irq) in events.drain(..) {
                 if let Some(irq) = irq {
                     self.memory.interrupt.request(irq);
                 }
                 match event {
-                    VideoEvent::HBlank => self.run_dma(DmaEvent::HBlank),
+                    VideoEvent::HBlank | VideoEvent::HBlankInVBlank => {
+                        self.run_dma(DmaEvent::HBlank)
+                    }
                     VideoEvent::VBlank => self.run_dma(DmaEvent::VBlank),
                     _ => {}
                 }
             }
+            self.memory.video_events = events;
         }
 
         let sound = std::mem::take(&mut self.memory.pending_sound_dma);
@@ -239,6 +237,54 @@ mod tests {
             delta < (CYCLES_PER_FRAME as u64) + 32,
             "run_frame overshot by {} cycles",
             delta - CYCLES_PER_FRAME as u64
+        );
+    }
+
+    #[test]
+    fn vblank_wakes_halt_within_one_frame() {
+        let mut gba = build_gba();
+        gba.memory.write_byte(0x0400_0004, 0x08);
+        gba.memory.write_byte(0x0400_0200, 0x01);
+        gba.memory.write_byte(0x0400_0208, 0x01);
+        gba.cpu.cpsr.irq_disable_bit = false;
+        gba.memory.write_byte(0x0400_0301, 0x00);
+        assert_eq!(gba.memory.system.get_power_mode(), PowerMode::Halt);
+        let start = gba.bus_cycles();
+        let limit = start + (CYCLES_PER_FRAME as u64) + 4000;
+        let mut prof = FrameProfile::default();
+        while gba.bus_cycles() < limit {
+            gba.tick_one(&mut prof, limit);
+            if gba.memory.system.get_power_mode() == PowerMode::Active {
+                break;
+            }
+        }
+        assert_eq!(
+            gba.memory.system.get_power_mode(),
+            PowerMode::Active,
+            "HALT must wake on VBlank IRQ within one frame; bus_cycles={}",
+            gba.bus_cycles() - start
+        );
+    }
+
+    #[test]
+    fn bios_readable_flips_with_pc_via_flush_pipeline() {
+        let mut gba = build_gba();
+        gba.memory.bios_readable = false;
+        gba.cpu.cpsr.irq_disable_bit = false;
+        gba.cpu.cpsr.mode = crate::cpu::psr::OperatingMode::usr;
+        gba.cpu.reg[crate::cpu::cpu::PC_INDEX] = 0x0800_0000;
+        gba.cpu.flush_pipeline(&mut gba.memory);
+        assert!(
+            !gba.memory.bios_readable,
+            "PC in cart after flush: bios_readable stays false"
+        );
+
+        let accepted = gba.cpu.setup_exception(crate::cpu::exception::Exception::IRQ, 0x0800_0004);
+        assert!(accepted);
+        gba.cpu.flush_pipeline(&mut gba.memory);
+        assert!(
+            gba.memory.bios_readable,
+            "after IRQ entry: PC=0x18 in BIOS, flush_pipeline must set bios_readable"
         );
     }
 }

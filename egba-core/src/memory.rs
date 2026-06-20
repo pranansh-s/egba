@@ -3,11 +3,11 @@ use crate::{
     bios::Bios,
     bus::Bus,
     cartridge::Cartridge,
-    control::{InterruptControl, SystemControl},
+    control::{InterruptControl, InterruptType, SystemControl},
     dma::{Dma, DmaMemory},
     keypad::Keypad,
     timer::Timers,
-    video::Video,
+    video::{Video, VideoEvent},
 };
 
 pub(crate) struct Memory {
@@ -35,6 +35,7 @@ pub(crate) struct Memory {
     pub(crate) pending_sound_dma: u8,
     pub(crate) bus_cycles: u64,
     pending_tick: u32,
+    pub(crate) video_events: Vec<(VideoEvent, Option<InterruptType>)>,
 
     last_rom_access: u32,
 }
@@ -61,6 +62,7 @@ impl Memory {
             pending_sound_dma: 0,
             bus_cycles: 0,
             pending_tick: 0,
+            video_events: Vec::with_capacity(256),
             last_rom_access: !0,
         }
     }
@@ -333,6 +335,11 @@ impl Bus for Memory {
 
     fn invalidate_rom_seq(&mut self) {
         self.last_rom_access = u32::MAX;
+    }
+
+    #[inline]
+    fn notify_pc(&mut self, pc: u32) {
+        self.bios_readable = pc < 0x0000_4000;
     }
 
     #[inline]

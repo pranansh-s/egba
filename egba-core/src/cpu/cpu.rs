@@ -125,6 +125,7 @@ impl CPU {
         };
 
         bus.invalidate_rom_seq();
+        bus.notify_pc(self.reg[PC_INDEX]);
         self.pipeline[1] = self.fetch(bus);
         self.pipeline[2] = self.fetch(bus);
         self.pipeline_dirty = true;

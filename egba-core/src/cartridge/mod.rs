@@ -97,7 +97,12 @@ impl Bus for Cartridge {
                     if rom_addr < self.rom.len() {
                         self.rom.data()[rom_addr]
                     } else {
-                        (addr >> 1) as u8
+                        let halfword = (addr >> 1) as u16;
+                        if addr & 1 == 0 {
+                            halfword as u8
+                        } else {
+                            (halfword >> 8) as u8
+                        }
                     }
                 }
             }
@@ -175,5 +180,20 @@ mod tests {
         let cart = Cartridge::new(rom, Path::new("/nonexistent/no.sav")).expect("cart");
         assert!(!cart.eeprom_read(0x0D00_0000));
         assert!(!cart.eeprom_read(0x0DFF_FFFF));
+    }
+
+    #[test]
+    fn cart_oob_open_bus_address_halfword() {
+        let rom = Rom::new(&vec![0u8; 0x1000]);
+        let cart = Cartridge::new(rom, Path::new("/nonexistent/no.sav")).expect("cart");
+        let cases: [(u32, u8, &str); 4] = [
+            (0x0800_2000, 0x00, "even byte: low byte of (addr>>1)&0xFFFF = 0x1000 low = 0"),
+            (0x0800_2001, 0x10, "odd byte: high byte of (addr>>1)&0xFFFF = 0x1000 high = 0x10"),
+            (0x0800_2002, 0x01, "next even: (0x800_2002>>1)&0xFFFF = 0x1001 low"),
+            (0x0800_2003, 0x10, "next odd: 0x1001 high"),
+        ];
+        for (addr, want, label) in cases {
+            assert_eq!(cart.read_byte(addr), want, "{label}");
+        }
     }
 }

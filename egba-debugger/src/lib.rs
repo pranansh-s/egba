@@ -24,59 +24,9 @@ use ratatui::{
 mod decoder;
 use decoder::{arm::arm_decode, thumb::thumb_decode};
 
-fn cpu_pc(gba: &GBA) -> u32 {
-    let cpu = gba.get_cpu();
-    match cpu.cpsr.operating_state {
-        OperatingState::ARM => cpu.arm_pc(),
-        OperatingState::THUMB => cpu.thumb_pc(),
-    }
-}
-
-fn open_trace_writer(log_path: &Path) -> std::io::Result<BufWriter<File>> {
-    if let Some(parent) = log_path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    Ok(BufWriter::new(File::create(log_path)?))
-}
-
-fn write_trace_line(
-    w: &mut BufWriter<File>,
-    gba: &GBA,
-    i: u32,
-) -> std::io::Result<()> {
-    let cpu = gba.get_cpu();
-    let cpsr = cpu.cpsr;
-    let state_char = match cpsr.operating_state {
-        OperatingState::ARM => 'A',
-        OperatingState::THUMB => 'T',
-    };
-    let pc = match cpsr.operating_state {
-        OperatingState::ARM => cpu.arm_pc(),
-        OperatingState::THUMB => cpu.thumb_pc(),
-    };
-    let instr = cpu.pipeline[1];
-    let cpsr_word: u32 = cpsr.into();
-    let r = cpu.reg;
-    let cyc = gba.bus_cycles();
-    writeln!(
-        w,
-        "{:08} cyc={:10} {} pc={:08X} instr={:08X} cpsr={:08X} r0={:08X} r1={:08X} r2={:08X} r3={:08X} r12={:08X} sp={:08X} lr={:08X}",
-        i, cyc, state_char, pc, instr, cpsr_word, r[0], r[1], r[2], r[3], r[12], r[13], r[14],
-    )
-}
-
 pub trait EGBADebugger {
     fn show_stats(&mut self);
-    fn dump_trace(&mut self, n: u32, log_path: &Path) -> std::io::Result<()>;
-    fn dump_trace_until(
-        &mut self,
-        max_n: u32,
-        break_pc: Option<u32>,
-        watch: &[u32],
-        log_path: &Path,
-    ) -> std::io::Result<()>;
     fn dump_screenshot(&self, path: &Path) -> std::io::Result<()>;
-    fn dump_io_snapshot(&self) -> String;
 }
 
 static OVERLAY_INIT: Once = Once::new();
@@ -164,89 +114,6 @@ impl EGBADebugger for GBA {
         terminal.backend_mut().flush().ok();
     }
 
-    fn dump_trace(&mut self, n: u32, log_path: &Path) -> std::io::Result<()> {
-        let mut w = open_trace_writer(log_path)?;
-
-        for i in 0..n {
-            if i % 10_000 == 0 {
-                writeln!(w, "; {}", self.dump_io_snapshot())?;
-            }
-            write_trace_line(&mut w, self, i)?;
-            self.step_one_instruction();
-        }
-
-        w.flush()?;
-        Ok(())
-    }
-
-    fn dump_trace_until(
-        &mut self,
-        max_n: u32,
-        break_pc: Option<u32>,
-        watch: &[u32],
-        log_path: &Path,
-    ) -> std::io::Result<()> {
-        let mut w = open_trace_writer(log_path)?;
-
-        let mut watched: Vec<(u32, u32)> = watch.iter().map(|&a| (a, self.read_word(a))).collect();
-
-        writeln!(w, "; {}", self.dump_io_snapshot())?;
-        for (a, v) in &watched {
-            writeln!(w, "; watch[{:08X}] = {:08X}", a, v)?;
-        }
-
-        for i in 0..max_n {
-            let pc = cpu_pc(self);
-
-            if let Some(bp) = break_pc {
-                if pc == bp {
-                    writeln!(w, "; BREAK at PC={:08X} after {} instructions", pc, i)?;
-                    writeln!(w, "; {}", self.dump_io_snapshot())?;
-                    let cpu = self.get_cpu();
-                    for (idx, r) in cpu.reg.iter().enumerate() {
-                        writeln!(w, ";   R{:02} = {:08X}", idx, r)?;
-                    }
-                    break;
-                }
-            }
-
-            write_trace_line(&mut w, self, i)?;
-            self.step_one_instruction();
-
-            for (addr, prev) in watched.iter_mut() {
-                let now = self.read_word(*addr);
-                if now != *prev {
-                    let pc_after = cpu_pc(self);
-                    writeln!(
-                        w,
-                        "; WATCH [{:08X}] {:08X} -> {:08X} (after instr #{} at PC={:08X})",
-                        addr, prev, now, i, pc_after
-                    )?;
-                    *prev = now;
-                }
-            }
-        }
-
-        w.flush()?;
-        Ok(())
-    }
-
-    fn dump_io_snapshot(&self) -> String {
-        let dispcnt = self.read_hword(0x0400_0000);
-        let dispstat = self.read_hword(0x0400_0004);
-        let vcount = self.read_hword(0x0400_0006);
-        let ie = self.read_hword(0x0400_0200);
-        let if_ = self.read_hword(0x0400_0202);
-        let ime = self.read_hword(0x0400_0208);
-        let waitcnt = self.read_hword(0x0400_0204);
-        let irq_vec = self.read_word(0x0300_7FFC);
-        let irq_vec_mirror = self.read_word(0x03FF_FFFC);
-        format!(
-            "io: DISPCNT={:04X} DISPSTAT={:04X} VCOUNT={:04X} IE={:04X} IF={:04X} IME={:04X} WAITCNT={:04X} VEC[3007FFC]={:08X} VEC[3FFFFFC]={:08X} cyc={}",
-            dispcnt, dispstat, vcount, ie, if_, ime, waitcnt, irq_vec, irq_vec_mirror, self.bus_cycles()
-        )
-    }
-
     fn dump_screenshot(&self, path: &Path) -> std::io::Result<()> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
@@ -266,5 +133,4 @@ impl EGBADebugger for GBA {
         w.flush()?;
         Ok(())
     }
-
 }

@@ -47,7 +47,6 @@ A cycle-accurate Game Boy Advance emulator written in Rust.
 ### Tooling
 - Drift-resistant 60 FPS event loop with per-second profiling line (events / run / render / audio / sleep ms, instructions, halt steps, cycles)
 - Headless mode for screenshots and CI-style smoke runs
-- Instruction tracer with PC breakpoints and word-watchpoints
 - ratatui TUI stats overlay (`--debug`)
 
 ---
@@ -90,7 +89,6 @@ cargo run --release -- \
 | `-d, --debug` | Open ratatui TUI stats overlay (adds intentional 300 ms / frame sleep) |
 | `--skip-bios` | Skip BIOS boot animation, jump straight to cart entry at `0x0800_0000` |
 | `--headless --frames <N> [--screenshot <PATH>]` | Run N frames without opening a window, optionally dump framebuffer PPM, then exit |
-| `--trace <N> [--trace-out <PATH>] [--break-pc <HEX>] [--watch <H1,H2,...>]` | Trace N instructions to a log (default `docs/captures/trace.log`), optionally stop on PC hit or log word-value changes at watched addresses |
 
 ### Default controls
 
@@ -120,12 +118,6 @@ Headless smoke render after 600 frames (~10 s of emulated time):
 ```bash
 cargo run --release -- -b roms/bios.bin -r roms/ags_test.gba \
     --headless --frames 600 --screenshot docs/screenshots/run.ppm
-```
-
-Trace 100 000 instructions, stop when PC hits `0x080000C0`, watching IRQ-pending and a stack slot:
-```bash
-cargo run --release -- -b roms/bios.bin -r roms/game.gba \
-    --trace 100000 --break-pc 080000C0 --watch 04000202,03007FFC
 ```
 
 Live in-terminal stats overlay:

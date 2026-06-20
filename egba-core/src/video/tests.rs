@@ -301,4 +301,35 @@ mod tests {
         assert_eq!(a.dot_cycle, b.dot_cycle);
         assert_eq!(a.dispstat, b.dispstat);
     }
+
+    #[test]
+    fn dispstat_low_byte_writable_mask() {
+        let cases: [(u8, u16, &str); 3] = [
+            (0x07, 0x0000, "bits 0-2 read-only HW flags: ignored on write"),
+            (0x38, 0x0038, "bits 3-5 IRQ enables: writable"),
+            (0x80, 0x0080, "bit 7 must be writable (previous 0x38 mask dropped it)"),
+        ];
+        for (value, want, label) in cases {
+            let mut v = make_video();
+            v.write_byte(0x004, value);
+            assert_eq!(v.read_byte(0x004) as u16, want, "{label}");
+        }
+    }
+
+    #[test]
+    fn step_n_emits_no_events_lost_for_full_frame() {
+        let mut v = make_video();
+        let mut hblanks = 0u32;
+        let mut hblank_in_vblanks = 0u32;
+        let mut vblanks = 0u32;
+        v.step_n(280896, |ev, _| match ev {
+            crate::video::VideoEvent::HBlank => hblanks += 1,
+            crate::video::VideoEvent::HBlankInVBlank => hblank_in_vblanks += 1,
+            crate::video::VideoEvent::VBlank => vblanks += 1,
+            _ => {}
+        });
+        assert_eq!(hblanks, 160, "one HBlank per visible scanline");
+        assert_eq!(hblank_in_vblanks, 68, "one HBlankInVBlank per VBlank line");
+        assert_eq!(vblanks, 1, "exactly one VBlank per frame, never dropped");
+    }
 }

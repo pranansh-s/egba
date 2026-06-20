@@ -14,6 +14,8 @@ pub(crate) trait Bus {
 
     fn invalidate_rom_seq(&mut self) {}
 
+    fn notify_pc(&mut self, _pc: u32) {}
+
     fn read_hword(&self, addr: u32) -> u16 {
         let addr = addr & !0b1;
         u16::from_le_bytes([self.read_byte(addr), self.read_byte(addr.wrapping_add(1))])

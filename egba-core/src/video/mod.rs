@@ -287,8 +287,8 @@ impl Bus for Video {
                 self.dispcnt.set_bit_range(8..16, value as u16);
             }
             0x004 => {
-                let writable = value & 0x38;
-                self.dispstat = (self.dispstat & !0x38) | (writable as u16);
+                let writable = value & 0xF8;
+                self.dispstat = (self.dispstat & !0xF8) | (writable as u16);
             }
             0x005 => {
                 self.dispstat.set_bit_range(8..16, value as u16);
