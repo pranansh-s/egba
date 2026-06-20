@@ -202,9 +202,7 @@ mod tests {
 
     fn setup_apu(soundcnt_h: u16) -> Apu {
         let mut apu = Apu::default();
-        // master enable
         apu.write_byte(0x084, 0x80);
-        // soundcnt_h (sets volumes and L/R enables via update_soundcnt_h on byte 3 write)
         apu.write_byte(0x082, soundcnt_h as u8);
         apu.write_byte(0x083, (soundcnt_h >> 8) as u8);
         apu
@@ -212,20 +210,16 @@ mod tests {
 
     #[test]
     fn apu_volume_shift_zero_halves_dsa() {
-        // DSA volume=0 (50%), DSA L+R enabled, DSB disabled.
-        // soundcnt_h bits: 8=DSA_R, 9=DSA_L, 10=DSA_timer (=0)
         let h = (1u16 << 8) | (1u16 << 9);
         let mut apu = setup_apu(h);
         apu.ds_a.current_sample = 100;
         let (l, r) = apu.mix_sample();
-        // DSA mixed at 50% -> 100 >> 1 = 50, then * 64 = 3200
         assert_eq!(l, 50 * 64, "left scaled 50% then i16-amplified");
         assert_eq!(r, 50 * 64, "right scaled 50% then i16-amplified");
     }
 
     #[test]
     fn apu_volume_shift_one_keeps_dsa() {
-        // DSA volume=1 (100%) -> bit 2 of soundcnt_h
         let h = (1u16 << 2) | (1u16 << 8) | (1u16 << 9);
         let mut apu = setup_apu(h);
         apu.ds_a.current_sample = 100;

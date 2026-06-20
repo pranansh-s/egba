@@ -113,8 +113,6 @@ mod tests {
 
     #[test]
     fn timer0_cascade_bit_is_ignored() {
-        // Per GBATEK: timer 0 has no upstream timer to cascade from; bit 2 ignored.
-        // With prescaler=1 and cascade bit set, timer 0 must still tick.
         let cases: [(u8, u32, u16, &str); 2] = [
             (0b1000_0000, 100, 100, "no cascade bit, prescaler 1"),
             (0b1000_0100, 100, 100, "cascade bit set on T0 -> still ticks"),
@@ -130,9 +128,7 @@ mod tests {
     #[test]
     fn timer_overflow_reloads_and_cascades() {
         let mut t = Timers::default();
-        // T0 prescaler=1, reload=0xFFFE -> overflows after 2 ticks; reloads 0xFFFE.
         enable_timer(&mut t, 0, 0b1000_0000, 0xFFFE);
-        // T1 cascade enabled.
         enable_timer(&mut t, 1, 0b1000_0100, 0);
         let of = t.step(2);
         assert_ne!(of & 1, 0, "T0 must overflow after 2 ticks");
@@ -143,7 +139,6 @@ mod tests {
     #[test]
     fn timer_prescaler_64_emits_overflow_every_64_cycles() {
         let mut t = Timers::default();
-        // prescaler=01 (64), enabled, reload=0xFFFF -> overflow each prescaled tick.
         enable_timer(&mut t, 2, 0b1000_0001, 0xFFFF);
         let of = t.step(64);
         assert_ne!(of & (1 << 2), 0, "T2 must overflow once at 64 cycles");

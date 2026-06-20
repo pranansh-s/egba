@@ -351,7 +351,6 @@ mod tests {
     fn dma3_immediate_word_copy_runs_on_immediate_event() {
         let mut dma = Dma::default();
         let mut mem = fake_mem(0x0800_0000, &[0xDEAD_BEEF, 0xCAFEBABE]);
-        // count=2 words, ctrl: enable(15) + 32bit(10) + immediate(12..14=0)
         setup_dma3(&mut dma, 0x0800_0000, 0x0300_0000, 2, 0x8400);
         let irq = dma.run(DmaEvent::Immediate, &mut mem);
         assert_eq!(irq, 0, "DMA3 IRQ not requested (enable bit 14 = 0)");
@@ -366,7 +365,6 @@ mod tests {
     fn dma_immediate_does_not_repeat() {
         let mut dma = Dma::default();
         let mut mem = fake_mem(0x0200_0000, &[1, 2, 3, 4]);
-        // count=2, immediate + repeat (bit 25 = 0x0200)
         setup_dma3(&mut dma, 0x0200_0000, 0x0300_0000, 2, 0x8400 | 0x0200);
         dma.run(DmaEvent::Immediate, &mut mem);
         assert_eq!(mem.writes.len(), 2);
@@ -382,7 +380,6 @@ mod tests {
     fn dma3_vblank_repeat_reruns_on_each_vblank() {
         let mut dma = Dma::default();
         let mut mem = fake_mem(0x0200_0000, &[10, 20]);
-        // count=1, VBlank timing (12..14 = 01 -> 0x1000), repeat (0x0200), 32bit (0x0400), enable (0x8000)
         setup_dma3(
             &mut dma,
             0x0200_0000,
@@ -400,7 +397,6 @@ mod tests {
     fn dma3_irq_flag_when_enabled() {
         let mut dma = Dma::default();
         let mut mem = fake_mem(0x0200_0000, &[42]);
-        // enable + 32bit + immediate + IRQ-on-end (bit 14 = 0x4000)
         setup_dma3(&mut dma, 0x0200_0000, 0x0300_0000, 1, 0x8400 | 0x4000);
         let irq = dma.run(DmaEvent::Immediate, &mut mem);
         assert_eq!(irq, 0b1000, "bit 3 = DMA3 IRQ flag");
@@ -408,7 +404,6 @@ mod tests {
 
     #[test]
     fn dma0_src_addr_mask_blocks_rom_region() {
-        // DMA0 src mask = 0x07FFFFFF. Source above 0x08000000 should be masked into internal area.
         assert_eq!(Dma::src_addr_mask(0), 0x07FF_FFFF);
         assert_eq!(Dma::src_addr_mask(1), 0x0FFF_FFFF);
         assert_eq!(Dma::src_addr_mask(2), 0x0FFF_FFFF);

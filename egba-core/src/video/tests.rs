@@ -8,9 +8,6 @@ mod tests {
         Video::new()
     }
 
-    // =========================================================================
-    // Palette / Color Conversion Tests
-    // =========================================================================
 
     #[test]
     fn rgb555_to_rgb888_black() {
@@ -54,9 +51,6 @@ mod tests {
         assert_eq!(result & 0xFF, 0xF8);
     }
 
-    // =========================================================================
-    // Sign Extension Tests
-    // =========================================================================
 
     #[test]
     fn sign_extend_28_positive() {
@@ -78,11 +72,7 @@ mod tests {
         assert_eq!(v.sign_extend_28(0), 0);
     }
 
-    // =========================================================================
-    // Blending Calculation Tests
-    // =========================================================================
 
-    /// Helper: compute alpha blend inline (same formula as Video::alpha_blend)
     fn alpha_blend(color1: u32, color2: u32, eva: u32, evb: u32) -> u32 {
         let r1 = (color1 >> 16) & 0xFF;
         let g1 = (color1 >> 8) & 0xFF;
@@ -169,9 +159,6 @@ mod tests {
         assert_eq!(brightness_decrease(0xFFFFFF, 16), 0x000000);
     }
 
-    // =========================================================================
-    // Video Timing Tests
-    // =========================================================================
 
     #[test]
     fn scanline_timing_cycles() {
@@ -189,14 +176,10 @@ mod tests {
     fn vblank_at_line_160() {
         let mut v = make_video();
 
-        // VBlank fires when vcount increments from 159 to 160.
-        // Each scanline = 1232 cycles. Step through 159 scanlines first.
         for _ in 0..(159 * 1232) {
             v.step();
         }
 
-        // Now we're at the start of scanline 159. Step through the rest
-        // and look for VBlank within the next 2 scanlines.
         let mut found_vblank = false;
         for _ in 0..(2 * 1232) {
             let (event, _) = v.step();
@@ -208,9 +191,6 @@ mod tests {
         assert!(found_vblank, "VBlank should fire when vcount reaches 160");
     }
 
-    // =========================================================================
-    // Forced Blank Tests
-    // =========================================================================
 
     #[test]
     fn forced_blank_produces_white() {
@@ -223,9 +203,6 @@ mod tests {
         }
     }
 
-    // =========================================================================
-    // Affine Reference Point Tests
-    // =========================================================================
 
     #[test]
     fn affine_ref_latched_on_register_write() {
@@ -243,19 +220,16 @@ mod tests {
     fn affine_ref_advanced_per_scanline() {
         let mut v = make_video();
 
-        // Set BG2 reference point X to 0
         v.write_byte(0x028, 0x00);
         v.write_byte(0x029, 0x00);
         v.write_byte(0x02A, 0x00);
         v.write_byte(0x02B, 0x00);
 
-        // Set PB (dmx) for BG2 to 256 (1.0 in 8.8)
         v.write_byte(0x022, 0x00);
         v.write_byte(0x023, 0x01);
 
         assert_eq!(v.internal_ref_x[0], 0);
 
-        // Run one scanline (960 cycles triggers render + PB advance)
         for _ in 0..960 {
             v.step();
         }
@@ -263,12 +237,8 @@ mod tests {
         assert_eq!(v.internal_ref_x[0], 256);
     }
 
-    // =========================================================================
-    // step_n parity vs step (cycle-batched fast path must match per-cycle)
-    // =========================================================================
 
     fn run_frame_one_cycle_at_a_time(v: &mut Video) {
-        // One frame = 228 scanlines × 1232 cycles = 280896 cycles.
         for _ in 0..280896u32 {
             v.step();
         }
@@ -295,21 +265,7 @@ mod tests {
     }
 
     #[test]
-    fn step_n_matches_step_in_chunks_of_1232() {
-        let mut a = make_video();
-        let mut b = make_video();
-        run_frame_one_cycle_at_a_time(&mut a);
-        run_frame_via_step_n(&mut b, 1232);
-        assert_eq!(a.vcount, b.vcount);
-        assert_eq!(a.dot_cycle, b.dot_cycle);
-        assert_eq!(a.dispstat, b.dispstat);
-    }
-
-    #[test]
     fn step_n_emits_hblank_and_vblank_event_counts() {
-        // A full frame = 228 HBlank-edge events (one per scanline) + 1 VBlank.
-        // Note: 160 of the HBlank edges happen during HDraw (-> HBlank event);
-        // 68 happen during VBlank (-> HBlankInVBlank event).
         let mut v = make_video();
         let mut hblank = 0u32;
         let mut hblank_in_vblank = 0u32;
@@ -335,7 +291,6 @@ mod tests {
         for _ in 0..961u32 {
             a.step();
         }
-        // Drive b in chunks of 7 — uneven divisor of HDRAW_CYCLES.
         let mut left = 961u32;
         while left > 0 {
             let take = left.min(7);

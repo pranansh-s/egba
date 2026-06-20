@@ -235,9 +235,6 @@ mod tests {
         cpu.cpsr.mode = OperatingMode::usr;
         cpu.cpsr.operating_state = OperatingState::ARM;
         cpu.cpsr.irq_disable_bit = false;
-        // Call site is post-CPU::step: after executing instr@X, reg[PC] = X+12
-        // (one fetch beyond the next instruction). arm_pc() therefore returns X+4,
-        // the address of the instruction that would have executed next.
         let x = 0x200u32;
         cpu.reg[PC_INDEX] = x + 12;
 
@@ -246,7 +243,6 @@ mod tests {
         intr.request = 1;
         assert!(intr.step(&mut cpu, &mut sys));
 
-        // LR_irq = next_instr + 4 = (X+4) + 4 = X+8 so SUBS PC,LR,#4 -> X+4.
         assert_eq!(cpu.reg[LR_INDEX], x + 8);
     }
 
@@ -258,7 +254,6 @@ mod tests {
         cpu.cpsr.mode = OperatingMode::usr;
         cpu.cpsr.operating_state = OperatingState::THUMB;
         cpu.cpsr.irq_disable_bit = false;
-        // Post-CPU::step THUMB: reg[PC] = X+6 (one fetch beyond next). thumb_pc() = X+2.
         let x = 0x200u32;
         cpu.reg[PC_INDEX] = x + 6;
 
@@ -267,7 +262,6 @@ mod tests {
         intr.request = 1;
         assert!(intr.step(&mut cpu, &mut sys));
 
-        // THUMB LR_irq = next_instr + 4 = (X+2) + 4 = X+6.
         assert_eq!(cpu.reg[LR_INDEX], x + 6);
     }
 

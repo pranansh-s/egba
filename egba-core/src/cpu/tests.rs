@@ -5,7 +5,6 @@ mod tests {
     use crate::cpu::exception::Exception;
     use crate::cpu::psr::{OperatingMode, OperatingState, ProgramStatusRegister};
 
-    /// A simple flat memory bus for testing
     struct TestBus {
         mem: Vec<u8>,
         ticks: u32,
@@ -50,9 +49,6 @@ mod tests {
         }
     }
 
-    // =========================================================================
-    // ALU Tests
-    // =========================================================================
 
     #[test]
     fn alu_add_basic() {
@@ -68,8 +64,8 @@ mod tests {
         let mut cpu = CPU::new();
         let result = cpu.ADD(0x7FFF_FFFF, 1, true);
         assert_eq!(result, 0x8000_0000);
-        assert!(!cpu.cpsr.c_condition_bit); // No unsigned carry
-        assert!(cpu.cpsr.v_condition_bit); // Signed overflow
+        assert!(!cpu.cpsr.c_condition_bit);
+        assert!(cpu.cpsr.v_condition_bit);
     }
 
     #[test]
@@ -77,7 +73,7 @@ mod tests {
         let mut cpu = CPU::new();
         let result = cpu.ADD(0xFFFF_FFFF, 1, true);
         assert_eq!(result, 0);
-        assert!(cpu.cpsr.c_condition_bit); // Unsigned carry
+        assert!(cpu.cpsr.c_condition_bit);
     }
 
     #[test]
@@ -85,7 +81,7 @@ mod tests {
         let mut cpu = CPU::new();
         let result = cpu.SUB(30, 10, true);
         assert_eq!(result, 20);
-        assert!(cpu.cpsr.c_condition_bit); // No borrow = carry set
+        assert!(cpu.cpsr.c_condition_bit);
         assert!(!cpu.cpsr.v_condition_bit);
     }
 
@@ -94,7 +90,7 @@ mod tests {
         let mut cpu = CPU::new();
         let result = cpu.SUB(0, 1, true);
         assert_eq!(result, 0xFFFF_FFFF);
-        assert!(!cpu.cpsr.c_condition_bit); // Borrow = carry clear
+        assert!(!cpu.cpsr.c_condition_bit);
     }
 
     #[test]
@@ -102,14 +98,14 @@ mod tests {
         let mut cpu = CPU::new();
         let result = cpu.SUB(0x8000_0000, 1, true);
         assert_eq!(result, 0x7FFF_FFFF);
-        assert!(cpu.cpsr.v_condition_bit); // Signed overflow
+        assert!(cpu.cpsr.v_condition_bit);
     }
 
     #[test]
     fn alu_adc_with_carry() {
         let mut cpu = CPU::new();
         let result = cpu.ADC(10, 20, true, true);
-        assert_eq!(result, 31); // 10 + 20 + 1
+        assert_eq!(result, 31);
         assert!(!cpu.cpsr.c_condition_bit);
     }
 
@@ -124,22 +120,19 @@ mod tests {
     #[test]
     fn alu_sbc_basic() {
         let mut cpu = CPU::new();
-        // SBC: op - op2 - (1 - carry)
         let result = cpu.SBC(30, 10, true, true);
-        assert_eq!(result, 20); // 30 - 10 - 0
+        assert_eq!(result, 20);
     }
 
     #[test]
     fn alu_sbc_with_borrow() {
         let mut cpu = CPU::new();
-        // carry = false means borrow active: op - op2 - 1
         let result = cpu.SBC(30, 10, true, false);
-        assert_eq!(result, 19); // 30 - 10 - 1
+        assert_eq!(result, 19);
     }
 
     #[test]
     fn alu_adc_scenarios() {
-        // Table-driven ADC: rows cover carry-in / unsigned overflow / signed overflow.
         let cases: [(u32, u32, bool, u32, bool, bool, &str); 6] = [
             (10, 20, false, 30, false, false, "no overflow no carry"),
             (10, 20, true,  31, false, false, "carry in adds 1"),
@@ -162,10 +155,6 @@ mod tests {
 
     #[test]
     fn alu_sbc_scenarios() {
-        // Table-driven SBC: rows cover borrow / no-borrow / sign-overflow / op<op2.
-        // Carry-in convention: carry=true means NO borrow (C=1), carry=false means borrow (C=0).
-        // C-out: 1 means no borrow occurred; 0 means borrow occurred.
-        // V-out: signed overflow.
         let cases: [(u32, u32, bool, u32, bool, bool, &str); 7] = [
             (30, 10, true,  20,         true,  false, "no borrow in, op>op2"),
             (30, 10, false, 19,         true,  false, "borrow in, op>op2 by margin"),
@@ -224,15 +213,12 @@ mod tests {
         assert_eq!(cpu.MVN(0xFFFF_FFFF), 0);
     }
 
-    // =========================================================================
-    // Shift Tests
-    // =========================================================================
 
     #[test]
     fn shift_lsl_zero() {
         let mut cpu = CPU::new();
         let result = cpu.LSL(0xDEAD_BEEF, 0, true);
-        assert_eq!(result, 0xDEAD_BEEF); // LSL#0 = no change
+        assert_eq!(result, 0xDEAD_BEEF);
     }
 
     #[test]
@@ -247,7 +233,7 @@ mod tests {
         let mut cpu = CPU::new();
         let result = cpu.LSL(1, 32, true);
         assert_eq!(result, 0);
-        assert!(cpu.cpsr.c_condition_bit); // C = bit 0 of original value
+        assert!(cpu.cpsr.c_condition_bit);
     }
 
     #[test]
@@ -268,24 +254,23 @@ mod tests {
     #[test]
     fn shift_lsr_zero_means_32() {
         let mut cpu = CPU::new();
-        // LSR#0 in immediate encoding means LSR#32
         let result = cpu.LSR(0x8000_0000, 0, true);
         assert_eq!(result, 0);
-        assert!(cpu.cpsr.c_condition_bit); // C = bit 31
+        assert!(cpu.cpsr.c_condition_bit);
     }
 
     #[test]
     fn shift_asr_basic() {
         let mut cpu = CPU::new();
         let result = cpu.ASR(0x8000_0000_u32, 1, true);
-        assert_eq!(result, 0xC000_0000); // Sign-extended
+        assert_eq!(result, 0xC000_0000);
     }
 
     #[test]
     fn shift_asr_zero_positive() {
         let mut cpu = CPU::new();
         let result = cpu.ASR(0x7FFF_FFFF, 0, true);
-        assert_eq!(result, 0); // All positive -> 0
+        assert_eq!(result, 0);
         assert!(!cpu.cpsr.c_condition_bit);
     }
 
@@ -293,7 +278,7 @@ mod tests {
     fn shift_asr_zero_negative() {
         let mut cpu = CPU::new();
         let result = cpu.ASR(0x8000_0000, 0, true);
-        assert_eq!(result, 0xFFFF_FFFF); // All negative -> -1
+        assert_eq!(result, 0xFFFF_FFFF);
         assert!(cpu.cpsr.c_condition_bit);
     }
 
@@ -302,7 +287,7 @@ mod tests {
         let mut cpu = CPU::new();
         let result = cpu.ROR(0x0000_0001, 1, true);
         assert_eq!(result, 0x8000_0000);
-        assert!(cpu.cpsr.c_condition_bit); // C = bit 0 before rotate
+        assert!(cpu.cpsr.c_condition_bit);
     }
 
     #[test]
@@ -310,9 +295,8 @@ mod tests {
         let mut cpu = CPU::new();
         cpu.cpsr.c_condition_bit = true;
         let result = cpu.ROR(0x0000_0001, 0, true);
-        // ROR#0 = RRX: (carry << 31) | (value >> 1)
         assert_eq!(result, 0x8000_0000);
-        assert!(cpu.cpsr.c_condition_bit); // New C = old bit 0
+        assert!(cpu.cpsr.c_condition_bit);
     }
 
     #[test]
@@ -320,12 +304,9 @@ mod tests {
         let mut cpu = CPU::new();
         let result = cpu.ROR(0xDEAD_BEEF, 32, true);
         assert_eq!(result, 0xDEAD_BEEF);
-        assert!(cpu.cpsr.c_condition_bit); // C = bit 31
+        assert!(cpu.cpsr.c_condition_bit);
     }
 
-    // =========================================================================
-    // NZ Flag Tests
-    // =========================================================================
 
     #[test]
     fn set_nz_zero() {
@@ -351,40 +332,37 @@ mod tests {
         assert!(!cpu.cpsr.n_condition_bit);
     }
 
-    // =========================================================================
-    // Condition Code Tests
-    // =========================================================================
 
     #[test]
     fn condition_eq() {
         let mut cpu = CPU::new();
         cpu.cpsr.z_condition_bit = true;
-        assert!(cpu.condition_check(0b0000)); // EQ
-        assert!(!cpu.condition_check(0b0001)); // NE
+        assert!(cpu.condition_check(0b0000));
+        assert!(!cpu.condition_check(0b0001));
     }
 
     #[test]
     fn condition_cs_cc() {
         let mut cpu = CPU::new();
         cpu.cpsr.c_condition_bit = true;
-        assert!(cpu.condition_check(0b0010)); // CS
-        assert!(!cpu.condition_check(0b0011)); // CC
+        assert!(cpu.condition_check(0b0010));
+        assert!(!cpu.condition_check(0b0011));
     }
 
     #[test]
     fn condition_mi_pl() {
         let mut cpu = CPU::new();
         cpu.cpsr.n_condition_bit = true;
-        assert!(cpu.condition_check(0b0100)); // MI
-        assert!(!cpu.condition_check(0b0101)); // PL
+        assert!(cpu.condition_check(0b0100));
+        assert!(!cpu.condition_check(0b0101));
     }
 
     #[test]
     fn condition_vs_vc() {
         let mut cpu = CPU::new();
         cpu.cpsr.v_condition_bit = true;
-        assert!(cpu.condition_check(0b0110)); // VS
-        assert!(!cpu.condition_check(0b0111)); // VC
+        assert!(cpu.condition_check(0b0110));
+        assert!(!cpu.condition_check(0b0111));
     }
 
     #[test]
@@ -392,7 +370,7 @@ mod tests {
         let mut cpu = CPU::new();
         cpu.cpsr.c_condition_bit = true;
         cpu.cpsr.z_condition_bit = false;
-        assert!(cpu.condition_check(0b1000)); // HI: C && !Z
+        assert!(cpu.condition_check(0b1000));
     }
 
     #[test]
@@ -400,7 +378,7 @@ mod tests {
         let mut cpu = CPU::new();
         cpu.cpsr.c_condition_bit = false;
         cpu.cpsr.z_condition_bit = false;
-        assert!(cpu.condition_check(0b1001)); // LS: !C || Z
+        assert!(cpu.condition_check(0b1001));
     }
 
     #[test]
@@ -408,7 +386,7 @@ mod tests {
         let mut cpu = CPU::new();
         cpu.cpsr.n_condition_bit = true;
         cpu.cpsr.v_condition_bit = true;
-        assert!(cpu.condition_check(0b1010)); // GE: N == V
+        assert!(cpu.condition_check(0b1010));
     }
 
     #[test]
@@ -416,7 +394,7 @@ mod tests {
         let mut cpu = CPU::new();
         cpu.cpsr.n_condition_bit = true;
         cpu.cpsr.v_condition_bit = false;
-        assert!(cpu.condition_check(0b1011)); // LT: N != V
+        assert!(cpu.condition_check(0b1011));
     }
 
     #[test]
@@ -425,25 +403,22 @@ mod tests {
         cpu.cpsr.z_condition_bit = false;
         cpu.cpsr.n_condition_bit = false;
         cpu.cpsr.v_condition_bit = false;
-        assert!(cpu.condition_check(0b1100)); // GT: !Z && N==V
+        assert!(cpu.condition_check(0b1100));
     }
 
     #[test]
     fn condition_le() {
         let mut cpu = CPU::new();
         cpu.cpsr.z_condition_bit = true;
-        assert!(cpu.condition_check(0b1101)); // LE: Z || N!=V
+        assert!(cpu.condition_check(0b1101));
     }
 
     #[test]
     fn condition_al() {
         let cpu = CPU::new();
-        assert!(cpu.condition_check(0b1110)); // AL: always
+        assert!(cpu.condition_check(0b1110));
     }
 
-    // =========================================================================
-    // PSR Conversion Tests
-    // =========================================================================
 
     #[test]
     fn psr_round_trip() {
@@ -473,14 +448,10 @@ mod tests {
 
     #[test]
     fn psr_invalid_mode_no_panic() {
-        // Should not panic — falls back to sys mode
         let mode = OperatingMode::from(0b00000);
         assert_eq!(mode, OperatingMode::sys);
     }
 
-    // =========================================================================
-    // Bank Switching Tests
-    // =========================================================================
 
     #[test]
     fn bank_switch_preserves_registers() {
@@ -489,19 +460,15 @@ mod tests {
         cpu.reg[SP_INDEX] = 0x1000;
         cpu.reg[LR_INDEX] = 0x2000;
 
-        // Switch to IRQ mode
         cpu.set_mode(OperatingMode::irq);
-        // SVC registers should be banked
         assert_ne!(cpu.reg[SP_INDEX], 0x1000);
         cpu.reg[SP_INDEX] = 0x3000;
         cpu.reg[LR_INDEX] = 0x4000;
 
-        // Switch back to SVC
         cpu.set_mode(OperatingMode::svc);
         assert_eq!(cpu.reg[SP_INDEX], 0x1000);
         assert_eq!(cpu.reg[LR_INDEX], 0x2000);
 
-        // Switch back to IRQ, verify its values persisted
         cpu.set_mode(OperatingMode::irq);
         assert_eq!(cpu.reg[SP_INDEX], 0x3000);
         assert_eq!(cpu.reg[LR_INDEX], 0x4000);
@@ -512,28 +479,22 @@ mod tests {
         let mut cpu = CPU::new();
         cpu.set_mode(OperatingMode::usr);
 
-        // Set R8-R12 in user mode
         for i in 8..=12 {
             cpu.reg[i] = (i as u32) * 100;
         }
 
-        // Switch to FIQ — R8-R12 should be banked
         cpu.set_mode(OperatingMode::fiq);
         for i in 8..=12 {
-            assert_eq!(cpu.reg[i], 0); // FIQ bank starts at 0
+            assert_eq!(cpu.reg[i], 0);
             cpu.reg[i] = (i as u32) * 200;
         }
 
-        // Switch back to user — original values should be restored
         cpu.set_mode(OperatingMode::usr);
         for i in 8..=12 {
             assert_eq!(cpu.reg[i], (i as u32) * 100);
         }
     }
 
-    // =========================================================================
-    // Exception Entry Tests
-    // =========================================================================
 
     #[test]
     fn exception_swi_enters_svc_mode() {
@@ -544,8 +505,7 @@ mod tests {
         cpu.cpsr.irq_disable_bit = false;
         cpu.reg[PC_INDEX] = 0x100;
 
-        // Put NOPs at exception vector 0x08 (SWI vector)
-        bus.write_word_at(0x08, 0xE1A00000); // MOV R0, R0 (NOP)
+        bus.write_word_at(0x08, 0xE1A00000);
         bus.write_word_at(0x0C, 0xE1A00000);
 
         cpu.setup_exception(Exception::SoftwareInterrupt, 0x104);
@@ -553,13 +513,13 @@ mod tests {
         assert_eq!(cpu.cpsr.mode, OperatingMode::svc);
         assert_eq!(cpu.cpsr.operating_state, OperatingState::ARM);
         assert!(cpu.cpsr.irq_disable_bit);
-        assert_eq!(cpu.reg[PC_INDEX], 0x08); // SWI vector
+        assert_eq!(cpu.reg[PC_INDEX], 0x08);
     }
 
     #[test]
     fn exception_irq_masked() {
         let mut cpu = CPU::new();
-        cpu.cpsr.irq_disable_bit = true; // IRQ masked
+        cpu.cpsr.irq_disable_bit = true;
         let accepted = cpu.setup_exception(Exception::IRQ, 0x100);
         assert!(!accepted);
     }
@@ -574,7 +534,7 @@ mod tests {
         let accepted = cpu.setup_exception(Exception::IRQ, 0x204);
         assert!(accepted);
         assert_eq!(cpu.cpsr.mode, OperatingMode::irq);
-        assert_eq!(cpu.reg[PC_INDEX], 0x18); // IRQ vector
+        assert_eq!(cpu.reg[PC_INDEX], 0x18);
         assert!(cpu.cpsr.irq_disable_bit);
     }
 
@@ -589,7 +549,6 @@ mod tests {
 
         cpu.setup_exception(Exception::IRQ, 0x100);
 
-        // SPSR should contain the old CPSR
         assert_eq!(cpu.spsr, original_cpsr);
     }
 
@@ -602,20 +561,15 @@ mod tests {
 
         cpu.setup_exception(Exception::IRQ, 0x204);
 
-        // LR in IRQ mode should be the return address
         assert_eq!(cpu.reg[LR_INDEX], 0x204);
     }
 
-    // =========================================================================
-    // Pipeline Tests
-    // =========================================================================
 
     #[test]
     fn pipeline_flush_refills_both_slots() {
         let mut cpu = CPU::new();
         let mut bus = TestBus::new(0x10000);
 
-        // Write 3 distinct NOP-like instructions at address 0
         bus.write_word_at(0x00, 0xAAAA_AAAA);
         bus.write_word_at(0x04, 0xBBBB_BBBB);
         bus.write_word_at(0x08, 0xCCCC_CCCC);
@@ -624,8 +578,6 @@ mod tests {
         cpu.reg[PC_INDEX] = 0x00;
         cpu.flush_pipeline(&mut bus);
 
-        // After flush, pipeline[1] and [2] should be filled
-        // PC should have advanced by 8 (two fetches)
         assert_eq!(cpu.pipeline[1], 0xAAAA_AAAA);
         assert_eq!(cpu.pipeline[2], 0xBBBB_BBBB);
         assert_eq!(cpu.reg[PC_INDEX], 0x08);
@@ -652,7 +604,6 @@ mod tests {
     fn arm_pc_offset() {
         let mut cpu = CPU::new();
         cpu.reg[PC_INDEX] = 0x108;
-        // In ARM mode, the "current" instruction PC is PC - 8
         assert_eq!(cpu.arm_pc(), 0x100);
     }
 
@@ -660,35 +611,27 @@ mod tests {
     fn thumb_pc_offset() {
         let mut cpu = CPU::new();
         cpu.reg[PC_INDEX] = 0x104;
-        // In Thumb mode, the "current" instruction PC is PC - 4
         assert_eq!(cpu.thumb_pc(), 0x100);
     }
 
-    // =========================================================================
-    // Pipeline / branch correctness
-    // =========================================================================
 
     #[test]
     fn branch_then_executes_both_target_and_target_plus_4() {
-        // 0x00: B +0x10   (EA00 0002 → branches to 0x10)
-        // 0x10: MOV r0, #0x11
-        // 0x14: MOV r1, #0x22
-        // 0x18: MOV r2, #0x33
         let mut cpu = CPU::new();
         let mut bus = TestBus::new(0x1000);
         bus.write_word_at(0x00, 0xEA00_0002);
-        bus.write_word_at(0x04, 0xE3A0_0000); // filler so flush after init reads safely
-        bus.write_word_at(0x10, 0xE3A0_0011); // MOV r0, #0x11
-        bus.write_word_at(0x14, 0xE3A0_1022); // MOV r1, #0x22
-        bus.write_word_at(0x18, 0xE3A0_2033); // MOV r2, #0x33
+        bus.write_word_at(0x04, 0xE3A0_0000);
+        bus.write_word_at(0x10, 0xE3A0_0011);
+        bus.write_word_at(0x14, 0xE3A0_1022);
+        bus.write_word_at(0x18, 0xE3A0_2033);
 
         cpu.cpsr.operating_state = OperatingState::ARM;
         cpu.reg[PC_INDEX] = 0x00;
         cpu.flush_pipeline(&mut bus);
 
-        cpu.step(&mut bus); // executes B at 0x00 -> flush, lands at 0x10
-        cpu.step(&mut bus); // should execute MOV r0,#0x11 at 0x10
-        cpu.step(&mut bus); // should execute MOV r1,#0x22 at 0x14
+        cpu.step(&mut bus);
+        cpu.step(&mut bus);
+        cpu.step(&mut bus);
 
         assert_eq!(cpu.reg[0], 0x11, "MOV r0,#0x11 at 0x10 must execute after branch");
         assert_eq!(
@@ -697,15 +640,9 @@ mod tests {
         );
     }
 
-    // =========================================================================
-    // Shift-by-register Rs==0 edge case
-    // =========================================================================
 
     #[test]
     fn arm_str_pc_stores_self_plus_12() {
-        // ARM7TDMI quirk: STR R15 stores (address_of_STR + 12).
-        // Since reg[PC] = self+8 during execute, that equals reg[PC] + 4.
-        // E580F000 = STR R15, [R0]  (P=1,U=1,B=0,W=0,L=0,Rn=R0,Rd=R15,off=0)
         let mut cpu = CPU::new();
         let mut bus = TestBus::new(0x1000);
         bus.write_word_at(0x100, 0xE580_F000);
@@ -729,7 +666,6 @@ mod tests {
 
     #[test]
     fn arm_stm_pc_stores_self_plus_12() {
-        // STMIA R0!, {R15}   E880_8000
         let mut cpu = CPU::new();
         let mut bus = TestBus::new(0x1000);
         bus.write_word_at(0x100, 0xE880_8000);
@@ -753,11 +689,9 @@ mod tests {
 
     #[test]
     fn shift_by_reg_zero_preserves_value_and_carry() {
-        // MOVS r0, r1, LSR r2     with r1=0x7000_0000, r2=0, carry=true
-        // Per ARM7TDMI: when shift-by-register amount is 0, value and carry pass through.
         let mut cpu = CPU::new();
         let mut bus = TestBus::new(0x1000);
-        bus.write_word_at(0x000, 0xE1B0_0231); // MOVS r0, r1, LSR r2
+        bus.write_word_at(0x000, 0xE1B0_0231);
         bus.write_word_at(0x004, 0xE3A0_0000);
         bus.write_word_at(0x008, 0xE3A0_0000);
 
@@ -775,8 +709,6 @@ mod tests {
 
     #[test]
     fn shift_by_reg_lsr_32_clears_value_carry_is_bit31() {
-        // MOVS r0, r1, LSR r2  with r1=0x8000_0000, r2=32
-        // Expected: r0 = 0, carry = bit31 of r1 = 1.
         let mut cpu = CPU::new();
         let mut bus = TestBus::new(0x1000);
         bus.write_word_at(0x000, 0xE1B0_0231);
@@ -795,13 +727,9 @@ mod tests {
         assert!(cpu.cpsr.c_condition_bit, "carry = bit31 of original");
     }
 
-    // =========================================================================
-    // ARM LDR misaligned rotate
-    // =========================================================================
 
     #[test]
     fn arm_ldr_word_misaligned_rotates_right() {
-        // LDR r0, [r1]  =  0xE591_0000
         let mut cpu = CPU::new();
         let mut bus = TestBus::new(0x1000);
         bus.write_word_at(0x000, 0xE591_0000);
@@ -815,7 +743,6 @@ mod tests {
         cpu.flush_pipeline(&mut bus);
         cpu.step(&mut bus);
 
-        // Word at 0x100 = 0xDEADBEEF rotated right 8 bits = 0xEFDEADBE
         assert_eq!(cpu.reg[0], 0xEFDE_ADBE);
     }
 
@@ -837,13 +764,9 @@ mod tests {
         assert_eq!(cpu.reg[0], 0xDEAD_BEEF);
     }
 
-    // =========================================================================
-    // Bus tick / cycle accounting
-    // =========================================================================
 
     #[test]
     fn cpu_step_ticks_bus_for_instruction_fetch() {
-        // ARM MOV r0, #0  (E3A00000)
         let mut cpu = CPU::new();
         let mut bus = TestBus::new(0x1000);
         bus.write_word_at(0x00, 0xE3A0_0000);
@@ -858,7 +781,6 @@ mod tests {
         cpu.step(&mut bus);
         let delta = bus.ticks - before;
 
-        // Single ARM data-proc step = 1 sequential fetch = 1 cycle (no memory access in MOV imm).
         assert!(
             delta >= 1,
             "expected cpu.step to tick bus at least once, got {}",
@@ -866,15 +788,11 @@ mod tests {
         );
     }
 
-    // =========================================================================
-    // SPSR Restore Tests
-    // =========================================================================
 
     #[test]
     fn restore_spsr_switches_mode() {
         let mut cpu = CPU::new();
 
-        // Start in IRQ mode with a saved SPSR pointing to user mode
         cpu.set_mode(OperatingMode::irq);
         let usr_cpsr = ProgramStatusRegister {
             mode: OperatingMode::usr,
@@ -897,17 +815,12 @@ mod tests {
         assert!(!cpu.cpsr.irq_disable_bit);
     }
 
-    // =========================================================================
-    // MRS / MSR Tests (BIOS init relies on these)
-    // =========================================================================
 
     #[test]
     fn arm_mrs_copies_cpsr_to_rd() {
-        // MRS R12, CPSR  =  0xE10F_C000
-        // BIOS-relevant: MRSEQ R12, CPSR = 0x010F_C000 with cond=EQ.
         let mut cpu = CPU::new();
         let mut bus = TestBus::new(0x1000);
-        bus.write_word_at(0x00, 0xE10F_C000); // MRS r12, CPSR (AL)
+        bus.write_word_at(0x00, 0xE10F_C000);
         bus.write_word_at(0x04, 0xE3A0_0000);
         bus.write_word_at(0x08, 0xE3A0_0000);
 
@@ -931,10 +844,6 @@ mod tests {
 
     #[test]
     fn thumb_neg_writes_back_negated_value() {
-        // THUMB format 4 opcode 0b1001 = NEG Rd, Rs => Rd = -Rs.
-        // Encoding: 0100_0010_01_Rs_Rd. NEG R0, R0 = 0b 01000010_01_000_000 = 0x4240.
-        // Bug: shared with ARM `is_test` table (0b1000..=0b1011) that suppresses writeback
-        // for TST/TEQ/CMP/CMN. THUMB NEG must still write Rd.
         let mut cpu = CPU::new();
         let mut bus = TestBus::new(0x1000);
         bus.write_hword_at(0x00, 0x4240);
@@ -955,11 +864,6 @@ mod tests {
 
     #[test]
     fn arm_adr_immediate_uses_pc_plus_8_not_plus_12() {
-        // ADD R0, PC, #0x258  =  E28F0F96.
-        // ARM ADR pattern: PC is read as self+8 for immediate operand2.
-        // The +12 (=self+8+4) rule applies ONLY to register-shift-by-register form (I=0, bit4=1).
-        // Bug: code applied +4 whenever operand2.bit(4)=1 regardless of I, breaking BIOS init
-        // (the boot-animation user IRQ vector was off by 4 -> handler skipped MOV R3 init -> IRQ never ack-ed).
         let mut cpu = CPU::new();
         let mut bus = TestBus::new(0x1000);
         bus.write_word_at(0x00A0, 0xE28F_0F96);
@@ -981,8 +885,6 @@ mod tests {
 
     #[test]
     fn arm_msr_in_user_mode_ignores_control_field() {
-        // MSR CPSR_fc, #0x11 = 0xE329_F011. Tries to switch to fiq (mode bits 0b10001).
-        // User mode is unprivileged: ARM ARM mandates control-field writes are dropped.
         let mut cpu = CPU::new();
         let mut bus = TestBus::new(0x1000);
         bus.write_word_at(0x00, 0xE329_F011);
@@ -1005,7 +907,6 @@ mod tests {
 
     #[test]
     fn arm_msr_in_privileged_mode_changes_mode() {
-        // Same MSR but from svc -> must succeed (privileged).
         let mut cpu = CPU::new();
         let mut bus = TestBus::new(0x1000);
         bus.write_word_at(0x00, 0xE329_F011);
@@ -1028,7 +929,6 @@ mod tests {
 
     #[test]
     fn arm_mrseq_runs_when_z_set_bios_init() {
-        // MRSEQ R12, CPSR = 0x010F_C000. With Z=1 (CPSR=0x600000D3), should write R12.
         let mut cpu = CPU::new();
         let mut bus = TestBus::new(0x1000);
         bus.write_word_at(0x00, 0x010F_C000);
@@ -1055,10 +955,6 @@ mod tests {
         assert_eq!(cpsr_before, cpsr_after, "MRS must not alter CPSR");
     }
 
-    // =========================================================================
-    // Multiply timing (gbatek ARM7TDMI: MUL=1S+mI, MLA=1S+(m+1)I,
-    // UMULL/SMULL=1S+(m+1)I, UMLAL/SMLAL=1S+(m+2)I)
-    // =========================================================================
 
     fn run_inst_ticks(inst: u32, setup: impl FnOnce(&mut CPU)) -> u32 {
         let mut cpu = CPU::new();
@@ -1079,8 +975,6 @@ mod tests {
 
     #[test]
     fn arm_mul_timing_scales_with_rs_leading_bits() {
-        // MUL R3, R1, R2 = 0xE003_0291. Signed m: top 24 bits all 0 or all 1 -> 1,
-        // top 16 -> 2, top 8 -> 3, else -> 4. MUL extra=0 -> total internal = m.
         let cases: [(u32, u32, &str); 5] = [
             (0x0000_0000, 1, "Rs=0 -> m=1"),
             (0xFFFF_FFFF, 1, "Rs=-1 (all ones) -> m=1 signed"),
@@ -1103,49 +997,25 @@ mod tests {
     }
 
     #[test]
-    fn arm_mla_costs_one_more_i_cycle_than_mul() {
-        // MLA R3, R1, R2, R0 = 0xE023_0291 (A=1 bit 21 set).
+    fn arm_multiply_family_extra_cycles() {
         let mul = run_inst_ticks(0xE003_0291, |c| {
             c.reg[1] = 1;
             c.reg[2] = 0;
         });
-        let mla = run_inst_ticks(0xE023_0291, |c| {
-            c.reg[1] = 1;
-            c.reg[2] = 0;
-            c.reg[0] = 0;
-        });
-        assert_eq!(mla, mul + 1, "MLA = MUL + 1 internal cycle");
-    }
-
-    #[test]
-    fn arm_umull_costs_one_more_i_cycle_than_mul() {
-        // UMULL RdLo=R3, RdHi=R4, Rm=R1, Rs=R2.
-        // Encoding: cond 0000_1 U A S RdHi RdLo Rs 1001 Rm.
-        // U=0 (unsigned), A=0, S=0, RdHi=4, RdLo=3, Rs=2, Rm=1.
-        // 1110 0000 1000 0100 0011 0010 1001 0001 = 0xE084_3291.
-        let mul = run_inst_ticks(0xE003_0291, |c| {
-            c.reg[1] = 1;
-            c.reg[2] = 0;
-        });
-        let umull = run_inst_ticks(0xE084_3291, |c| {
-            c.reg[1] = 1;
-            c.reg[2] = 0;
-        });
-        assert_eq!(umull, mul + 1, "UMULL = MUL + 1 internal cycle (long)");
-    }
-
-    #[test]
-    fn arm_umlal_costs_two_more_i_cycles_than_mul() {
-        // UMLAL: A=1, U=0. 1110 0000 1010 0100 0011 0010 1001 0001 = 0xE0A4_3291.
-        let mul = run_inst_ticks(0xE003_0291, |c| {
-            c.reg[1] = 1;
-            c.reg[2] = 0;
-        });
-        let umlal = run_inst_ticks(0xE0A4_3291, |c| {
-            c.reg[1] = 1;
-            c.reg[2] = 0;
-        });
-        assert_eq!(umlal, mul + 2, "UMLAL = MUL + 2 internal cycles");
+        let cases: [(u32, u32, &str); 4] = [
+            (0xE023_0291, 1, "MLA = MUL + 1"),
+            (0xE084_3291, 1, "UMULL = MUL + 1"),
+            (0xE0A4_3291, 2, "UMLAL = MUL + 2"),
+            (0xE0E4_3291, 2, "SMLAL = MUL + 2"),
+        ];
+        for (inst, extra, label) in cases {
+            let ticks = run_inst_ticks(inst, |c| {
+                c.reg[0] = 0;
+                c.reg[1] = 1;
+                c.reg[2] = 0;
+            });
+            assert_eq!(ticks, mul + extra, "{label}");
+        }
     }
 
     fn run_thumb_inst_ticks(inst: u16, setup: impl FnOnce(&mut CPU)) -> u32 {
@@ -1167,8 +1037,6 @@ mod tests {
 
     #[test]
     fn thumb_mul_timing_scales_with_rs_leading_bits() {
-        // THUMB MUL R0, R1: format 4, opcode=0b1101, Rs=R1, Rd=R0.
-        // 0100_00_1101_001_000 = 0x4348. ARM7TDMI: 1S + mI same as ARM MUL.
         let cases: [(u32, u32, &str); 4] = [
             (0x0000_0000, 1, "Rs=0 -> m=1"),
             (0x0000_0100, 2, "Rs bit 8 -> m=2"),
@@ -1191,9 +1059,6 @@ mod tests {
 
     #[test]
     fn arm_smull_unsigned_m_uses_only_zero_check() {
-        // SMULL: U=1. 1110 0000 1100 0100 0011 0010 1001 0001 = 0xE0C4_3291.
-        // Signed Rs=0xFFFF_FFFF -> m=1. Unsigned Rs=0xFFFF_FFFF -> m=4.
-        // SMULL is signed so Rs=-1 should be m=1.
         let smull_neg_one = run_inst_ticks(0xE0C4_3291, |c| {
             c.reg[1] = 1;
             c.reg[2] = 0xFFFF_FFFF;
@@ -1207,7 +1072,6 @@ mod tests {
             "SMULL with Rs=-1 must cost same as Rs=0 (both m=1 signed)"
         );
 
-        // UMULL with the same Rs=-1 should hit m=4 -> 3 more cycles than UMULL with Rs=0.
         let umull_max = run_inst_ticks(0xE084_3291, |c| {
             c.reg[1] = 1;
             c.reg[2] = 0xFFFF_FFFF;

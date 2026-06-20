@@ -204,7 +204,6 @@ mod tests {
             delta,
             CYCLES_PER_FRAME
         );
-        // And not pathologically more than one extra instruction's worth.
         assert!(
             delta < (CYCLES_PER_FRAME as u64) + 32,
             "run_frame overshot by {} cycles",
