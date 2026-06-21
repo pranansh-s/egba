@@ -181,23 +181,24 @@ impl CPU {
         rd: usize,
         operand2: usize,
     ) {
-        let mut op = self.reg[rn];
         let update_cpsr = s && rd != PC_INDEX;
         let op2 = if i {
             let imm = bit_r!(operand2, 0..8) as u32;
             let rotate = 2 * bit_r!(operand2, 8..12) as u32;
             let rotated = imm.rotate_right(rotate);
             if update_cpsr && rotate != 0 {
-                self.cpsr.c_condition_bit = rotated & 0x8000_0000 != 0;
+                self.cpsr.c_condition_bit = rotated.bit(31);
             }
             rotated
         } else {
             self.shift_by_reg(operand2, update_cpsr)
         };
 
-        if !i && rn == PC_INDEX && operand2.bit(4) {
-            op = op.wrapping_add(4);
-        }
+        let op = if !i && rn == PC_INDEX && operand2.bit(4) {
+            self.reg[rn].wrapping_add(4)
+        } else {
+            self.reg[rn]
+        };
 
         let res = match opcode {
             0b0000 => self.AND(op, op2),
@@ -257,11 +258,15 @@ impl CPU {
             offset as u32
         };
 
-        let addr = match (p, u) {
-            (false, _) => self.reg[rn],
-            (true, true) => self.reg[rn].wrapping_add(shift),
-            (true, false) => self.reg[rn].wrapping_sub(shift),
+        let original_rn = self.reg[rn];
+        let writeback_value = if u {
+            original_rn.wrapping_add(shift)
+        } else {
+            original_rn.wrapping_sub(shift)
         };
+
+        let addr = if p { writeback_value } else { original_rn };
+        let writeback = w || !p;
 
         let pre_mode = self.cpsr.mode;
         if w && !p {
@@ -273,13 +278,19 @@ impl CPU {
         bus.tick(c);
 
         if l {
-            self.reg[rd] = if b {
+            let loaded = if b {
                 bus.read_byte(addr) as u32
             } else {
                 bus.read_word(addr).rotate_right(8 * (addr & 0b11))
             };
 
             bus.tick(1);
+
+            if writeback && rn != rd {
+                self.reg[rn] = writeback_value;
+            }
+
+            self.reg[rd] = loaded;
 
             if rd == PC_INDEX {
                 self.flush_pipeline(bus);
@@ -292,21 +303,18 @@ impl CPU {
             };
 
             if b {
-                bus.write_byte(addr, bit_r!(val, 0..8) as u8);
+                bus.write_byte(addr, val as u8);
             } else {
                 bus.write_word(addr, val);
+            }
+
+            if writeback {
+                self.reg[rn] = writeback_value;
             }
         }
 
         if w && !p {
             self.set_mode(pre_mode);
-        }
-
-        if w || !p {
-            self.reg[rn] = match u {
-                true => self.reg[rn].wrapping_add(shift),
-                false => self.reg[rn].wrapping_sub(shift),
-            };
         }
     }
 
@@ -331,38 +339,53 @@ impl CPU {
             self.reg[offset_lo]
         };
 
-        let addr = match (p, u) {
-            (false, true) | (false, false) => self.reg[rn],
-            (true, true) => self.reg[rn].wrapping_add(shift),
-            (true, false) => self.reg[rn].wrapping_sub(shift),
+        let original_rn = self.reg[rn];
+        let writeback_value = if u {
+            original_rn.wrapping_add(shift)
+        } else {
+            original_rn.wrapping_sub(shift)
         };
+
+        let addr = if p { writeback_value } else { original_rn };
+        let writeback = w || !p;
 
         let width = if h { 2 } else { 1 };
         let c = bus.access_cycles(addr, width);
         bus.tick(c);
 
         if l {
-            self.reg[rd] = if h {
-                let mut val = bus.read_hword(addr) as u32;
-                val = if s {
-                    let val = (val as i16) >> (8 * (addr & 0b1));
-                    val as u32
+            let loaded = if h {
+                let raw = bus.read_hword(addr) as u32;
+                let rot = 8 * (addr & 0b1);
+                if s {
+                    ((raw as i16) >> rot) as u32
                 } else {
-                    val.rotate_right(8 * (addr & 0b1))
-                };
-                val
+                    raw.rotate_right(rot)
+                }
             } else {
                 bus.read_byte(addr) as i8 as u32
             };
             bus.tick(1);
-        } else {
-            bus.write_hword(addr, self.reg[rd] as u16);
-        }
 
-        if w || !p {
-            self.reg[rn] = match u {
-                true => self.reg[rn].wrapping_add(shift),
-                false => self.reg[rn].wrapping_sub(shift),
+            if writeback && rn != rd {
+                self.reg[rn] = writeback_value;
+            }
+
+            self.reg[rd] = loaded;
+
+            if rd == PC_INDEX {
+                self.flush_pipeline(bus);
+            }
+        } else {
+            let val = if rd == PC_INDEX {
+                self.reg[PC_INDEX].wrapping_add(4)
+            } else {
+                self.reg[rd]
+            };
+            bus.write_hword(addr, val as u16);
+
+            if writeback {
+                self.reg[rn] = writeback_value;
             }
         }
     }
@@ -378,22 +401,42 @@ impl CPU {
         rn: usize,
         r_list: u16,
     ) {
-        let regs_length = r_list.count_ones();
+        let empty = r_list == 0;
+        let xfer_list: u16 = if empty { 1 << PC_INDEX } else { r_list };
+        let regs_length = xfer_list.count_ones();
+        let total_bytes = 4 * regs_length;
+        let wb_bytes = if empty { 0x40 } else { total_bytes };
+
         let base_address = match (p, u) {
             (false, true) => self.reg[rn],
             (true, true) => self.reg[rn].wrapping_add(4),
-            (false, false) => self.reg[rn].wrapping_sub(4 * (regs_length - 1)),
-            (true, false) => self.reg[rn].wrapping_sub(4 * regs_length),
+            (false, false) => self.reg[rn].wrapping_sub(total_bytes.wrapping_sub(4)),
+            (true, false) => self.reg[rn].wrapping_sub(total_bytes),
         };
 
+        let writeback_value = if u {
+            self.reg[rn].wrapping_add(wb_bytes)
+        } else {
+            self.reg[rn].wrapping_sub(wb_bytes)
+        };
+
+        let user_bank = s && !xfer_list.bit(PC_INDEX);
         let pre_mode = self.cpsr.mode;
-        if s && !r_list.bit(PC_INDEX) {
+        if user_bank {
             self.set_mode(OperatingMode::usr);
+        }
+
+        let rn_in_list = !empty && r_list.bit(rn);
+        let first_reg = r_list.trailing_zeros() as usize;
+        let stm_early_writeback = !l && w && rn_in_list && rn != first_reg;
+
+        if stm_early_writeback {
+            self.reg[rn] = writeback_value;
         }
 
         let mut addr = base_address;
         for r in 0..=PC_INDEX {
-            if r_list.bit(r) {
+            if xfer_list.bit(r) {
                 let c = bus.access_cycles(addr, 4);
                 bus.tick(c);
                 if l {
@@ -424,18 +467,25 @@ impl CPU {
             bus.tick(1);
         }
 
-        if s && !r_list.bit(PC_INDEX) {
+        if user_bank {
             self.set_mode(pre_mode);
         }
 
-        if w && !(l && r_list.bit(rn)) {
-            self.reg[rn] = match u {
-                true => self.reg[rn].wrapping_add(4 * regs_length),
-                false => self.reg[rn].wrapping_sub(4 * regs_length),
-            };
+        let do_writeback = if empty {
+            true
+        } else if !w {
+            false
+        } else if !l {
+            !stm_early_writeback
+        } else {
+            !(rn_in_list && rn != first_reg)
+        };
+
+        if do_writeback {
+            self.reg[rn] = writeback_value;
         }
 
-        if l && r_list.bit(PC_INDEX) {
+        if l && xfer_list.bit(PC_INDEX) {
             self.flush_pipeline(bus);
         }
     }
@@ -472,8 +522,7 @@ impl CPU {
         self.reg[rd] = prod;
 
         let m = Self::mul_m_cycles(rs_val, true);
-        let extra = if a { 1 } else { 0 };
-        bus.tick(m + extra);
+        bus.tick(m + a as u32);
 
         if s {
             self.set_NZ(prod);
@@ -510,8 +559,7 @@ impl CPU {
         self.reg[rd_lo] = prod as u32;
 
         let m = Self::mul_m_cycles(rs_val, u);
-        let extra = 1 + if a { 1 } else { 0 };
-        bus.tick(m + extra);
+        bus.tick(m + 1 + a as u32);
 
         if s {
             self.set_NZ_64(prod);
@@ -520,14 +568,30 @@ impl CPU {
 
     fn arm_SWP(&mut self, bus: &mut impl Bus, b: bool, rn: usize, rd: usize, rm: usize) {
         let swap_address = self.reg[rn];
-        if b {
-            self.reg[rd] = bus.read_byte(swap_address) as u32;
-            bus.write_byte(swap_address, self.reg[rm] as u8);
+        let rm_val = self.reg[rm];
+
+        let width = if b { 1 } else { 4 };
+        let c = bus.access_cycles(swap_address, width);
+        bus.tick(c);
+
+        let loaded = if b {
+            bus.read_byte(swap_address) as u32
         } else {
-            self.reg[rd] = bus
-                .read_word(swap_address)
-                .rotate_right(8 * (swap_address & 0b11));
-            bus.write_word(swap_address, self.reg[rm]);
+            bus.read_word(swap_address)
+                .rotate_right(8 * (swap_address & 0b11))
+        };
+
+        let c = bus.access_cycles(swap_address, width);
+        bus.tick(c);
+
+        if b {
+            bus.write_byte(swap_address, rm_val as u8);
+        } else {
+            bus.write_word(swap_address, rm_val);
         }
+
+        self.reg[rd] = loaded;
+
+        bus.tick(1);
     }
 }

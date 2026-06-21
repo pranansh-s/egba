@@ -1086,4 +1086,511 @@ mod tests {
             "UMULL with Rs=-1 hits m=4 vs m=1 at Rs=0"
         );
     }
+
+    fn run_arm(inst: u32, setup: impl FnOnce(&mut CPU, &mut TestBus)) -> (CPU, TestBus) {
+        let mut cpu = CPU::new();
+        let mut bus = TestBus::new(0x1000);
+        bus.write_word_at(0x00, inst);
+        bus.write_word_at(0x04, 0xE3A0_0000);
+        bus.write_word_at(0x08, 0xE3A0_0000);
+
+        cpu.cpsr.operating_state = OperatingState::ARM;
+        cpu.cpsr.mode = OperatingMode::sys;
+        cpu.reg[PC_INDEX] = 0x00;
+        setup(&mut cpu, &mut bus);
+        cpu.flush_pipeline(&mut bus);
+        cpu.step(&mut bus);
+        (cpu, bus)
+    }
+
+    fn read_word(bus: &TestBus, addr: u32) -> u32 {
+        let a = addr as usize;
+        u32::from_le_bytes([bus.mem[a], bus.mem[a + 1], bus.mem[a + 2], bus.mem[a + 3]])
+    }
+
+
+    #[test]
+    fn arm_stmia_writeback_increments_by_4n() {
+        // STMIA r0!, {r1, r2, r3} = 0xE8A0_000E
+        let (cpu, bus) = run_arm(0xE8A0_000E, |c, _| {
+            c.reg[0] = 0x200;
+            c.reg[1] = 0x11;
+            c.reg[2] = 0x22;
+            c.reg[3] = 0x33;
+        });
+        assert_eq!(read_word(&bus, 0x200), 0x11, "r1 at base+0");
+        assert_eq!(read_word(&bus, 0x204), 0x22, "r2 at base+4");
+        assert_eq!(read_word(&bus, 0x208), 0x33, "r3 at base+8");
+        assert_eq!(cpu.reg[0], 0x20C, "writeback = base + 4*N");
+    }
+
+    #[test]
+    fn arm_stmib_addresses_start_at_base_plus_4() {
+        // STMIB r0!, {r1, r2} = E9A0_0006
+        let (cpu, bus) = run_arm(0xE9A0_0006, |c, _| {
+            c.reg[0] = 0x200;
+            c.reg[1] = 0xAA;
+            c.reg[2] = 0xBB;
+        });
+        assert_eq!(read_word(&bus, 0x204), 0xAA, "IB first store at base+4");
+        assert_eq!(read_word(&bus, 0x208), 0xBB, "IB second store at base+8");
+        assert_eq!(cpu.reg[0], 0x208, "IB writeback = base + 4*N");
+    }
+
+    #[test]
+    fn arm_stmda_addresses_end_at_base() {
+        // STMDA r0!, {r1, r2} = E820_0006
+        let (cpu, bus) = run_arm(0xE820_0006, |c, _| {
+            c.reg[0] = 0x208;
+            c.reg[1] = 0xAA;
+            c.reg[2] = 0xBB;
+        });
+        assert_eq!(read_word(&bus, 0x204), 0xAA, "DA r1 stored at base-4(N-1)");
+        assert_eq!(read_word(&bus, 0x208), 0xBB, "DA r2 stored at base");
+        assert_eq!(cpu.reg[0], 0x200, "DA writeback = base - 4*N");
+    }
+
+    #[test]
+    fn arm_stmdb_addresses_end_at_base_minus_4() {
+        // STMDB r0!, {r1, r2} = E920_0006
+        let (cpu, bus) = run_arm(0xE920_0006, |c, _| {
+            c.reg[0] = 0x208;
+            c.reg[1] = 0xAA;
+            c.reg[2] = 0xBB;
+        });
+        assert_eq!(read_word(&bus, 0x200), 0xAA, "DB r1 at base-4N");
+        assert_eq!(read_word(&bus, 0x204), 0xBB, "DB r2 at base-4");
+        assert_eq!(cpu.reg[0], 0x200, "DB writeback = base - 4*N");
+    }
+
+    #[test]
+    fn arm_ldmia_loads_registers_and_writes_back() {
+        // LDMIA r0!, {r1, r2} = E8B0_0006
+        let (cpu, _bus) = run_arm(0xE8B0_0006, |c, b| {
+            c.reg[0] = 0x200;
+            b.write_word_at(0x200, 0xDEAD_0001);
+            b.write_word_at(0x204, 0xDEAD_0002);
+        });
+        assert_eq!(cpu.reg[1], 0xDEAD_0001);
+        assert_eq!(cpu.reg[2], 0xDEAD_0002);
+        assert_eq!(cpu.reg[0], 0x208, "writeback = base + 4*N");
+    }
+
+    #[test]
+    fn arm_stm_rn_lowest_in_list_stores_original_base() {
+        // STMIA r0!, {r0, r1} = E8A0_0003 -- r0 is lowest in list
+        let (cpu, bus) = run_arm(0xE8A0_0003, |c, _| {
+            c.reg[0] = 0x200;
+            c.reg[1] = 0x99;
+        });
+        assert_eq!(
+            read_word(&bus, 0x200),
+            0x200,
+            "Rn lowest in list: original base stored"
+        );
+        assert_eq!(read_word(&bus, 0x204), 0x99, "r1 stored at base+4");
+        assert_eq!(cpu.reg[0], 0x208, "writeback still applies");
+    }
+
+    #[test]
+    fn arm_stm_rn_not_lowest_in_list_stores_modified_base() {
+        // STMIA r2!, {r0, r2} = E8A2_0005 -- r2 is not lowest (r0 < r2)
+        let (cpu, bus) = run_arm(0xE8A2_0005, |c, _| {
+            c.reg[0] = 0x77;
+            c.reg[2] = 0x200;
+        });
+        assert_eq!(read_word(&bus, 0x200), 0x77, "r0 stored first at base+0");
+        assert_eq!(
+            read_word(&bus, 0x204),
+            0x208,
+            "Rn not lowest: writeback value (base+4N) stored"
+        );
+        assert_eq!(cpu.reg[2], 0x208, "writeback final");
+    }
+
+    #[test]
+    fn arm_ldm_rn_in_list_first_position_writeback_wins() {
+        // LDMIA r0!, {r0, r1} = E8B0_0003 -- r0 in list at FIRST position.
+        // ARM7TDMI silicon (verified armwrestler): Rn first in list → writeback wins.
+        let (cpu, _bus) = run_arm(0xE8B0_0003, |c, b| {
+            c.reg[0] = 0x200;
+            b.write_word_at(0x200, 0xCAFE_BABE);
+            b.write_word_at(0x204, 0x1234_5678);
+        });
+        assert_eq!(
+            cpu.reg[0], 0x208,
+            "Rn first in list: writeback (base+4N) overrides loaded value"
+        );
+        assert_eq!(cpu.reg[1], 0x1234_5678);
+    }
+
+    #[test]
+    fn arm_ldm_empty_list_loads_r15_and_writeback_0x40() {
+        // LDMIA r0!, {} = E8B0_0000 -- empty list, transfers R15, wb by 0x40
+        let (cpu, _bus) = run_arm(0xE8B0_0000, |c, b| {
+            c.reg[0] = 0x200;
+            b.write_word_at(0x200, 0x300);
+        });
+        assert_eq!(
+            cpu.reg[PC_INDEX] & !0b11,
+            0x300 + 8,
+            "empty LDM loads PC from [base], then pipeline fill advances 8"
+        );
+        assert_eq!(cpu.reg[0], 0x240, "empty LDM writeback = base + 0x40");
+    }
+
+    #[test]
+    fn arm_stm_empty_list_stores_r15_and_writeback_0x40() {
+        // STMIA r0!, {} = E8A0_0000 -- empty list, stores R15 = pc+12, wb by 0x40
+        let (cpu, bus) = run_arm(0xE8A0_0000, |c, _| {
+            c.reg[0] = 0x200;
+        });
+        assert_eq!(
+            read_word(&bus, 0x200),
+            0x0C,
+            "empty STM stores PC+12 (instr at 0x00 -> 0x0C)"
+        );
+        assert_eq!(cpu.reg[0], 0x240, "empty STM writeback = base + 0x40");
+    }
+
+    #[test]
+    fn arm_stm_empty_list_decrement_writeback_minus_0x40() {
+        // STMDA r0!, {} = E820_0000 -- empty list, DA mode, wb = base - 0x40
+        let (cpu, _bus) = run_arm(0xE820_0000, |c, _| {
+            c.reg[0] = 0x200;
+        });
+        assert_eq!(cpu.reg[0], 0x1C0, "empty STMDA writeback = base - 0x40");
+    }
+
+
+    #[test]
+    fn arm_ldr_pre_indexed_writeback_updates_base() {
+        // LDR r0, [r1, #4]! = E5B1_0004
+        let (cpu, _bus) = run_arm(0xE5B1_0004, |c, b| {
+            c.reg[1] = 0x200;
+            b.write_word_at(0x204, 0xAABB_CCDD);
+        });
+        assert_eq!(cpu.reg[0], 0xAABB_CCDD);
+        assert_eq!(cpu.reg[1], 0x204, "pre-indexed writeback updates base");
+    }
+
+    #[test]
+    fn arm_ldr_post_indexed_always_writes_back() {
+        // LDR r0, [r1], #4 = E491_0004 -- post-indexed: load from [r1], then r1 += 4
+        let (cpu, _bus) = run_arm(0xE491_0004, |c, b| {
+            c.reg[1] = 0x200;
+            b.write_word_at(0x200, 0xAABB_CCDD);
+        });
+        assert_eq!(cpu.reg[0], 0xAABB_CCDD, "post-indexed loads from original base");
+        assert_eq!(cpu.reg[1], 0x204, "post-indexed always writes back (W=T bit)");
+    }
+
+    #[test]
+    fn arm_ldr_negative_offset_pre_indexed() {
+        // LDR r0, [r1, #-4] = E511_0004 (U=0)
+        let (cpu, _bus) = run_arm(0xE511_0004, |c, b| {
+            c.reg[1] = 0x204;
+            b.write_word_at(0x200, 0xFEED_FACE);
+        });
+        assert_eq!(cpu.reg[0], 0xFEED_FACE);
+        assert_eq!(cpu.reg[1], 0x204, "no writeback when W=0 and P=1");
+    }
+
+    #[test]
+    fn arm_ldrb_loads_zero_extended_byte() {
+        // LDRB r0, [r1] = E5D1_0000
+        let (cpu, _bus) = run_arm(0xE5D1_0000, |c, b| {
+            c.reg[1] = 0x200;
+            b.write_word_at(0x200, 0xAABB_CC9F);
+        });
+        assert_eq!(cpu.reg[0], 0x9F, "LDRB must zero-extend the byte at addr");
+    }
+
+    #[test]
+    fn arm_strb_writes_single_byte() {
+        // STRB r0, [r1] = E5C1_0000
+        let (_cpu, bus) = run_arm(0xE5C1_0000, |c, b| {
+            c.reg[0] = 0xAABB_CC42;
+            c.reg[1] = 0x200;
+            b.write_word_at(0x200, 0xFFFF_FFFF);
+        });
+        assert_eq!(bus.mem[0x200], 0x42, "STRB writes low byte of Rd");
+        assert_eq!(bus.mem[0x201], 0xFF, "adjacent byte unchanged");
+    }
+
+    #[test]
+    fn arm_ldm_rn_in_list_non_first_load_wins() {
+        // LDMIA r3!, {r1, r2, r3} = E8B3_000E -- r3 in list at NON-first position.
+        // ARM7TDMI silicon (verified armwrestler): Rn non-first → load wins (writeback suppressed).
+        let (cpu, _bus) = run_arm(0xE8B3_000E, |c, b| {
+            c.reg[3] = 0x200;
+            b.write_word_at(0x200, 0x1111);
+            b.write_word_at(0x204, 0x2222);
+            b.write_word_at(0x208, 0x3333);
+        });
+        assert_eq!(cpu.reg[1], 0x1111);
+        assert_eq!(cpu.reg[2], 0x2222);
+        assert_eq!(
+            cpu.reg[3], 0x3333,
+            "Rn non-first in list: loaded value at Rn's slot wins, writeback suppressed"
+        );
+    }
+
+    #[test]
+    fn arm_ldrh_rn_equals_rd_pre_indexed_writeback_load_wins() {
+        // LDRH r0, [r0, #4]! = E1F0_00B4
+        let (cpu, _bus) = run_arm(0xE1F0_00B4, |c, b| {
+            c.reg[0] = 0x200;
+            b.write_hword_at(0x204, 0xBEEF);
+        });
+        assert_eq!(
+            cpu.reg[0], 0xBEEF,
+            "LDRH Rn==Rd writeback: loaded halfword wins"
+        );
+    }
+
+    #[test]
+    fn thumb_ror_rs_zero_is_noop() {
+        // THUMB format 4 ROR r0, r1: opcode=0b0111, Rs=r1, Rd=r0
+        // encoding: 0100_0001_11_001_000 = 0x41C8
+        let mut cpu = CPU::new();
+        let mut bus = TestBus::new(0x100);
+        bus.write_hword_at(0x00, 0x41C8);
+        bus.write_hword_at(0x02, 0x46C0);
+        bus.write_hword_at(0x04, 0x46C0);
+
+        cpu.cpsr.operating_state = OperatingState::THUMB;
+        cpu.cpsr.mode = OperatingMode::sys;
+        cpu.reg[0] = 0xDEAD_BEEF;
+        cpu.reg[1] = 0;
+        cpu.cpsr.c_condition_bit = true;
+        cpu.reg[PC_INDEX] = 0x00;
+        cpu.flush_pipeline(&mut bus);
+        cpu.step(&mut bus);
+
+        assert_eq!(cpu.reg[0], 0xDEAD_BEEF, "ROR Rs=0: Rd unchanged");
+        assert!(cpu.cpsr.c_condition_bit, "ROR Rs=0: C unchanged");
+    }
+
+    #[test]
+    fn thumb_ror_rs_mod32_zero_carry_from_bit31() {
+        // ROR r0, r1 with r1=32: low byte != 0 but mod 32 == 0
+        // Rd unchanged, C = Rd[31]
+        let mut cpu = CPU::new();
+        let mut bus = TestBus::new(0x100);
+        bus.write_hword_at(0x00, 0x41C8);
+        bus.write_hword_at(0x02, 0x46C0);
+        bus.write_hword_at(0x04, 0x46C0);
+
+        cpu.cpsr.operating_state = OperatingState::THUMB;
+        cpu.cpsr.mode = OperatingMode::sys;
+        cpu.reg[0] = 0x8000_0001;
+        cpu.reg[1] = 32;
+        cpu.cpsr.c_condition_bit = false;
+        cpu.reg[PC_INDEX] = 0x00;
+        cpu.flush_pipeline(&mut bus);
+        cpu.step(&mut bus);
+
+        assert_eq!(cpu.reg[0], 0x8000_0001, "ROR Rs[4:0]=0 (Rs=32): Rd unchanged");
+        assert!(cpu.cpsr.c_condition_bit, "C = Rd[31] = 1");
+    }
+
+    #[test]
+    fn thumb_ror_rs_256_is_noop_not_rrx() {
+        // ROR r0, r1 with r1=256: low byte = 0, Rs[7:0]==0 -> no-op (not RRX)
+        let mut cpu = CPU::new();
+        let mut bus = TestBus::new(0x100);
+        bus.write_hword_at(0x00, 0x41C8);
+        bus.write_hword_at(0x02, 0x46C0);
+        bus.write_hword_at(0x04, 0x46C0);
+
+        cpu.cpsr.operating_state = OperatingState::THUMB;
+        cpu.cpsr.mode = OperatingMode::sys;
+        cpu.reg[0] = 0x0000_0001;
+        cpu.reg[1] = 256;
+        cpu.cpsr.c_condition_bit = false;
+        cpu.reg[PC_INDEX] = 0x00;
+        cpu.flush_pipeline(&mut bus);
+        cpu.step(&mut bus);
+
+        assert_eq!(cpu.reg[0], 0x0000_0001, "ROR Rs=256: Rs[7:0]==0, no-op");
+        assert!(!cpu.cpsr.c_condition_bit, "ROR Rs=256: C unchanged");
+    }
+
+    #[test]
+    fn thumb_lsr_rs_zero_is_noop() {
+        // LSR r0, r1: opcode=0b0011, Rs=r1, Rd=r0
+        // encoding: 0100_0000_11_001_000 = 0x40C8
+        let mut cpu = CPU::new();
+        let mut bus = TestBus::new(0x100);
+        bus.write_hword_at(0x00, 0x40C8);
+        bus.write_hword_at(0x02, 0x46C0);
+        bus.write_hword_at(0x04, 0x46C0);
+
+        cpu.cpsr.operating_state = OperatingState::THUMB;
+        cpu.cpsr.mode = OperatingMode::sys;
+        cpu.reg[0] = 0xABCD_1234;
+        cpu.reg[1] = 0;
+        cpu.cpsr.c_condition_bit = true;
+        cpu.reg[PC_INDEX] = 0x00;
+        cpu.flush_pipeline(&mut bus);
+        cpu.step(&mut bus);
+
+        assert_eq!(cpu.reg[0], 0xABCD_1234, "LSR Rs=0: Rd unchanged");
+        assert!(cpu.cpsr.c_condition_bit, "LSR Rs=0: C unchanged");
+    }
+
+    #[test]
+    fn thumb_asr_rs_zero_is_noop() {
+        // ASR r0, r1: opcode=0b0100, Rs=r1, Rd=r0
+        // encoding: 0100_0001_00_001_000 = 0x4108
+        let mut cpu = CPU::new();
+        let mut bus = TestBus::new(0x100);
+        bus.write_hword_at(0x00, 0x4108);
+        bus.write_hword_at(0x02, 0x46C0);
+        bus.write_hword_at(0x04, 0x46C0);
+
+        cpu.cpsr.operating_state = OperatingState::THUMB;
+        cpu.cpsr.mode = OperatingMode::sys;
+        cpu.reg[0] = 0x8000_0000;
+        cpu.reg[1] = 0;
+        cpu.cpsr.c_condition_bit = false;
+        cpu.reg[PC_INDEX] = 0x00;
+        cpu.flush_pipeline(&mut bus);
+        cpu.step(&mut bus);
+
+        assert_eq!(cpu.reg[0], 0x8000_0000, "ASR Rs=0: Rd unchanged");
+        assert!(!cpu.cpsr.c_condition_bit, "ASR Rs=0: C unchanged");
+    }
+
+    #[test]
+    fn arm_ldr_rn_equals_rd_pre_indexed_writeback_load_wins() {
+        // LDR r0, [r0, #4]! = E5B0_0004 -- Rn == Rd, pre-indexed writeback
+        // Per ARM7TDMI: loaded value wins, writeback suppressed for Rd.
+        let (cpu, _bus) = run_arm(0xE5B0_0004, |c, b| {
+            c.reg[0] = 0x200;
+            b.write_word_at(0x204, 0xCAFE_F00D);
+        });
+        assert_eq!(
+            cpu.reg[0], 0xCAFE_F00D,
+            "Rn==Rd LDR pre-indexed: loaded value wins, NOT writeback addr"
+        );
+    }
+
+    #[test]
+    fn arm_ldr_rn_equals_rd_post_indexed_load_wins() {
+        // LDR r0, [r0], #4 = E490_0004 -- Rn == Rd, post-indexed
+        // Per ARM7TDMI: load wins; writeback to Rn (==Rd) suppressed.
+        let (cpu, _bus) = run_arm(0xE490_0004, |c, b| {
+            c.reg[0] = 0x200;
+            b.write_word_at(0x200, 0xDEAD_BEEF);
+        });
+        assert_eq!(
+            cpu.reg[0], 0xDEAD_BEEF,
+            "Rn==Rd LDR post-indexed: loaded value wins"
+        );
+    }
+
+    #[test]
+    fn arm_str_rn_equals_rd_writeback_stores_original_rd() {
+        // STR r0, [r0, #4]! = E5A0_0004 -- Rn == Rd, pre-indexed writeback
+        // STR uses original Rd value (read before writeback), then writeback Rn.
+        let (cpu, bus) = run_arm(0xE5A0_0004, |_c, _b| {
+            // r0 set inside via setup callback below
+        });
+        // Re-run with explicit setup
+        let (cpu, bus) = run_arm(0xE5A0_0004, |c, _| {
+            c.reg[0] = 0x200;
+        });
+        assert_eq!(
+            read_word(&bus, 0x204),
+            0x200,
+            "STR Rn==Rd: original Rd (=0x200) stored at writeback addr"
+        );
+        assert_eq!(cpu.reg[0], 0x204, "Rn writeback still applies");
+    }
+
+    #[test]
+    fn arm_swp_word_swaps_memory_and_register() {
+        // SWP r0, r1, [r2] = E102_0091 -- Rd=0, Rn=2, Rm=1
+        let (cpu, bus) = run_arm(0xE102_0091, |c, b| {
+            c.reg[1] = 0xAABB_CCDD;
+            c.reg[2] = 0x200;
+            b.write_word_at(0x200, 0x1122_3344);
+        });
+        assert_eq!(cpu.reg[0], 0x1122_3344, "Rd gets old [Rn] value");
+        assert_eq!(read_word(&bus, 0x200), 0xAABB_CCDD, "[Rn] gets Rm value");
+    }
+
+    #[test]
+    fn arm_swp_byte_swaps_byte_only() {
+        // SWPB r0, r1, [r2] = E142_0091 -- B=1
+        let (cpu, bus) = run_arm(0xE142_0091, |c, b| {
+            c.reg[1] = 0x1234_56AB;
+            c.reg[2] = 0x200;
+            b.write_word_at(0x200, 0x1122_3344);
+        });
+        assert_eq!(cpu.reg[0], 0x44, "SWPB Rd gets old byte at [Rn]");
+        assert_eq!(bus.mem[0x200], 0xAB, "SWPB writes low byte of Rm to [Rn]");
+        assert_eq!(bus.mem[0x201], 0x33, "SWPB leaves adjacent bytes alone");
+    }
+
+    #[test]
+    fn arm_swp_rd_equals_rm_uses_original_rm_for_store() {
+        // SWP r0, r0, [r1] = E101_0090 -- Rd == Rm == r0; Rn=r1.
+        // Bug if Rd loaded first: write would use loaded value not orig Rm.
+        let (cpu, bus) = run_arm(0xE101_0090, |c, b| {
+            c.reg[0] = 0xAAAA_BBBB;
+            c.reg[1] = 0x200;
+            b.write_word_at(0x200, 0x1234_5678);
+        });
+        assert_eq!(cpu.reg[0], 0x1234_5678, "Rd gets old memory value");
+        assert_eq!(
+            read_word(&bus, 0x200),
+            0xAAAA_BBBB,
+            "Rd==Rm: store must use ORIGINAL Rm value, not freshly loaded Rd"
+        );
+    }
+
+    #[test]
+    fn arm_swpb_rd_equals_rm_uses_original_rm_byte() {
+        // SWPB r0, r0, [r1] = E141_0090
+        let (cpu, bus) = run_arm(0xE141_0090, |c, b| {
+            c.reg[0] = 0x99;
+            c.reg[1] = 0x200;
+            b.write_word_at(0x200, 0x4242_4242);
+        });
+        assert_eq!(cpu.reg[0], 0x42, "Rd gets old byte at [Rn]");
+        assert_eq!(bus.mem[0x200], 0x99, "Rd==Rm SWPB: original Rm byte stored");
+    }
+
+    #[test]
+    fn arm_swp_word_rotates_misaligned_addr() {
+        // SWP r0, r1, [r2] with r2 misaligned -> load rotates.
+        let (cpu, _bus) = run_arm(0xE102_0091, |c, b| {
+            c.reg[1] = 0;
+            c.reg[2] = 0x201;
+            b.write_word_at(0x200, 0xDEAD_BEEF);
+        });
+        // misaligned load rotates right by 8 (addr & 3 = 1)
+        assert_eq!(cpu.reg[0], 0xEFDE_ADBE, "SWP misaligned load rotates");
+    }
+
+    #[test]
+    fn arm_ldr_word_rotation_at_each_offset() {
+        let cases: [(u32, u32, &str); 4] = [
+            (0x200, 0xDEAD_BEEF, "aligned addr: no rotate"),
+            (0x201, 0xEFDE_ADBE, "addr&3=1: ROR 8"),
+            (0x202, 0xBEEF_DEAD, "addr&3=2: ROR 16"),
+            (0x203, 0xADBE_EFDE, "addr&3=3: ROR 24"),
+        ];
+        for (addr, expected, label) in cases {
+            // LDR r0, [r1] with r1=addr, mem[0x200]=DEAD_BEEF
+            let (cpu, _bus) = run_arm(0xE591_0000, |c, b| {
+                c.reg[1] = addr;
+                b.write_word_at(0x200, 0xDEAD_BEEF);
+            });
+            assert_eq!(cpu.reg[0], expected, "{label}");
+        }
+    }
 }

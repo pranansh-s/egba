@@ -167,7 +167,7 @@ egba/
 |----------|--------|-------|
 | GBA BIOS boot animation | ✅ Passes | Nintendo logo scrolls, palette fades, jumps to cart entry |
 | `ags_test.gba` (Nintendo AGS aging) | 🟡 Partial | Boots and renders main menu. Passes KEY INPUT; fails MEMORY (1/9 pass), LCD (5/7 pass), TIMER (0/3 pass), DMA (6/9 pass), and INTERRUPT (3/7 pass) |
-| `armwrestler.gba` | 🟡 Partial | Only passes ARM ALU and THUMB LDM/STM, LDR/STR instruction sets fully; fails other departments partially |
+| `armwrestler.gba` | ✅ Passes | All ARM and Thumb instruction tests pass (23/23) |
 | jsmolka tests | 🟡 Partial | Only passes memory tests; fails thumb, nes, and bios |
 | PeterLemon `GBA-Tests` | ⬜ Not yet run | CPU instruction and BIOS SWI low-level suite |
 | mGBA tests | ⬜ Not yet run | Timer, DMA, and APU timing correctness suite |

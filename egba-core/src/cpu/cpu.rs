@@ -75,20 +75,11 @@ impl CPU {
     #[inline]
     pub(crate) fn fetch(&mut self, bus: &mut impl Bus) -> u32 {
         let addr = self.reg[PC_INDEX];
-        let instr;
-        let width;
-        match self.cpsr.operating_state {
-            OperatingState::ARM => {
-                instr = bus.read_word(addr);
-                self.reg[PC_INDEX] = self.reg[PC_INDEX].wrapping_add(4);
-                width = 4;
-            }
-            OperatingState::THUMB => {
-                instr = bus.read_hword(addr) as u32;
-                self.reg[PC_INDEX] = self.reg[PC_INDEX].wrapping_add(2);
-                width = 2;
-            }
-        }
+        let (instr, width) = match self.cpsr.operating_state {
+            OperatingState::ARM => (bus.read_word(addr), 4),
+            OperatingState::THUMB => (bus.read_hword(addr) as u32, 2),
+        };
+        self.reg[PC_INDEX] = addr.wrapping_add(width);
         let c = bus.access_cycles(addr, width);
         bus.tick(c);
         instr
@@ -119,10 +110,11 @@ impl CPU {
     }
 
     pub(crate) fn flush_pipeline(&mut self, bus: &mut impl Bus) {
-        self.reg[PC_INDEX] &= match self.cpsr.operating_state {
+        let align_mask = match self.cpsr.operating_state {
             OperatingState::ARM => !0b11,
             OperatingState::THUMB => !0b1,
         };
+        self.reg[PC_INDEX] &= align_mask;
 
         bus.invalidate_rom_seq();
         bus.notify_pc(self.reg[PC_INDEX]);

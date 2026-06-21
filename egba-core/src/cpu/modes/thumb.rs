@@ -154,16 +154,44 @@ impl CPU {
     fn thumb_format4(&mut self, bus: &mut impl Bus, opcode: usize, rs: usize, rd: usize) {
         let op = self.reg[rd];
         let op2 = self.reg[rs];
+        let shift_amt = (op2 & 0xFF) as u8;
 
         let res = match opcode {
             0b0000 => self.AND(op, op2),
             0b0001 => self.EOR(op, op2),
-            0b0010 => self.LSL(op, op2 as u8, true),
-            0b0011 => self.LSR(op, op2 as u8, true),
-            0b0100 => self.ASR(op, op2 as u8, true),
+            0b0010 => {
+                if shift_amt == 0 {
+                    op
+                } else {
+                    self.LSL(op, shift_amt, true)
+                }
+            }
+            0b0011 => {
+                if shift_amt == 0 {
+                    op
+                } else {
+                    self.LSR(op, shift_amt, true)
+                }
+            }
+            0b0100 => {
+                if shift_amt == 0 {
+                    op
+                } else {
+                    self.ASR(op, shift_amt, true)
+                }
+            }
             0b0101 => self.ADC(op, op2, true, self.cpsr.c_condition_bit),
             0b0110 => self.SBC(op, op2, true, self.cpsr.c_condition_bit),
-            0b0111 => self.ROR(op, op2 as u8, true),
+            0b0111 => {
+                if shift_amt == 0 {
+                    op
+                } else if shift_amt & 0x1F == 0 {
+                    self.cpsr.c_condition_bit = op.bit(31);
+                    op
+                } else {
+                    self.ROR(op, shift_amt & 0x1F, true)
+                }
+            }
             0b1000 => self.AND(op, op2),
             0b1001 => self.SUB(0, op2, true),
             0b1010 => self.SUB(op, op2, true),
@@ -260,18 +288,7 @@ impl CPU {
         rd: usize,
     ) {
         self.arm_LDRH_LDRSB_LDRSH_STRH(
-            bus,
-            true,
-            true,
-            false,
-            false,
-            h || s,
-            rb,
-            rd,
-            42069,
-            s,
-            h,
-            ro,
+            bus, true, true, false, false, h || s, rb, rd, 0, s, h, ro,
         );
     }
 
