@@ -27,7 +27,7 @@ pub(crate) struct Memory {
     pub(crate) cartridge: Cartridge,
 
     pub(crate) bios_readable: bool,
-    last_bios_value: u8,
+    pub(crate) last_bios_value: std::cell::Cell<u32>,
 
     last_bus_value: u8,
 
@@ -56,7 +56,7 @@ impl Memory {
             apu: Apu::default(),
             cartridge,
             bios_readable: true,
-            last_bios_value: 0,
+            last_bios_value: std::cell::Cell::new(0xE129F000),
             last_bus_value: 0,
             video_cycle_debt: 0,
             pending_sound_dma: 0,
@@ -74,9 +74,19 @@ impl Bus for Memory {
         match addr {
             0x0000_0000..=0x0000_3FFF => {
                 if self.bios_readable {
+                    let aligned = addr & !0b11;
+                    let word = u32::from_le_bytes([
+                        self.bios.read(aligned),
+                        self.bios.read(aligned + 1),
+                        self.bios.read(aligned + 2),
+                        self.bios.read(aligned + 3),
+                    ]);
+                    self.last_bios_value.set(word);
                     self.bios.read(addr)
                 } else {
-                    self.last_bios_value
+                    let word = self.last_bios_value.get();
+                    let shift = (addr & 0b11) * 8;
+                    (word >> shift) as u8
                 }
             }
             0x0200_0000..=0x02FF_FFFF => self.ewram.read_byte(addr & 0x3_FFFF),
@@ -90,13 +100,12 @@ impl Bus for Memory {
                     0x100..=0x10F => self.timers.read_byte(offset),
                     0x130..=0x133 => self.keypad.read_byte(offset),
                     0x200..=0x203 | 0x208..=0x209 => self.interrupt.read_byte(offset),
-                    0x204..=0x205 => self.system.read_byte(offset),
+                    0x204..=0x205 | 0x300 => self.system.read_byte(offset),
                     _ => self.last_bus_value,
                 }
             }
             0x0500_0000..=0x05FF_FFFF => self.video.palette[(addr & 0x3FF) as usize],
-            0x0600_0000..=0x0601_7FFF => self.video.vram[(addr & 0x1_7FFF) as usize],
-            0x0601_8000..=0x06FF_FFFF => {
+            0x0600_0000..=0x06FF_FFFF => {
                 let mirror = addr & 0x1_FFFF;
                 let effective = if mirror >= 0x1_8000 {
                     mirror - 0x8000
@@ -127,7 +136,7 @@ impl Bus for Memory {
                     0x100..=0x10F => self.timers.write_byte(offset, value),
                     0x130..=0x133 => self.keypad.write_byte(offset, value),
                     0x200..=0x203 | 0x208..=0x209 => self.interrupt.write_byte(offset, value),
-                    0x204..=0x205 | 0x301 => self.system.write_byte(offset, value),
+                    0x204..=0x205 | 0x300 | 0x301 => self.system.write_byte(offset, value),
                     _ => {}
                 }
             }
@@ -185,6 +194,10 @@ impl Bus for Memory {
                 let off = (addr & 0x3FE) as usize;
                 u16::from_le_bytes([self.video.oam[off], self.video.oam[off + 1]])
             }
+            0x0E00_0000..=0x0FFF_FFFF => {
+                let b = self.read_byte(addr);
+                u16::from_le_bytes([b, b])
+            }
             _ => u16::from_le_bytes([self.read_byte(addr), self.read_byte(addr.wrapping_add(1))]),
         }
     }
@@ -239,6 +252,10 @@ impl Bus for Memory {
                     self.video.oam[off + 3],
                 ])
             }
+            0x0E00_0000..=0x0FFF_FFFF => {
+                let b = self.read_byte(addr);
+                u32::from_le_bytes([b, b, b, b])
+            }
             _ => u32::from_le_bytes([
                 self.read_byte(addr),
                 self.read_byte(addr.wrapping_add(1)),
@@ -250,6 +267,12 @@ impl Bus for Memory {
 
     fn write_hword(&mut self, addr: u32, value: u16) {
         match addr {
+            0x0E00_0000..=0x0FFF_FFFF => {
+                let rot = (addr & 1) * 8;
+                let byte = (value.rotate_right(rot) & 0xFF) as u8;
+                self.write_byte(addr, byte);
+                return;
+            }
             0x0500_0000..=0x05FF_FFFF => {
                 let pal_addr = (addr & 0x3FE) as usize;
                 self.video.palette[pal_addr] = value as u8;
@@ -292,6 +315,12 @@ impl Bus for Memory {
                 return;
             }
             _ => {}
+        }
+        if (0x0E00_0000..=0x0FFF_FFFF).contains(&addr) {
+            let rot = (addr & 3) * 8;
+            let byte = (value.rotate_right(rot) & 0xFF) as u8;
+            self.write_byte(addr, byte);
+            return;
         }
         let addr = addr & !0b11;
         self.write_hword(addr, value as u16);
@@ -349,9 +378,9 @@ impl Bus for Memory {
         }
 
         self.bus_cycles = self.bus_cycles.wrapping_add(n as u64);
-        self.pending_tick = self.pending_tick.wrapping_add(n);
-
         self.video_cycle_debt = self.video_cycle_debt.saturating_add(n);
+
+        self.advance_timers_and_apu(n);
     }
 }
 
@@ -363,7 +392,11 @@ impl Memory {
             return;
         }
         self.pending_tick = 0;
+        self.advance_timers_and_apu(n);
+    }
 
+    #[inline]
+    fn advance_timers_and_apu(&mut self, n: u32) {
         self.apu.step(n);
 
         let timer_overflow = self.timers.step(n);
@@ -629,5 +662,13 @@ impl DmaMemory for Memory {
 
     fn dma_write_word(&mut self, addr: u32, val: u32) {
         self.write_word(addr, val);
+    }
+
+    fn dma_access_cycles(&mut self, addr: u32, width: u32) -> u32 {
+        <Memory as Bus>::access_cycles(self, addr, width)
+    }
+
+    fn dma_tick(&mut self, cycles: u32) {
+        <Memory as Bus>::tick(self, cycles);
     }
 }

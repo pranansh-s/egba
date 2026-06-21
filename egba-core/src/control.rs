@@ -99,6 +99,7 @@ pub(crate) struct SystemControl {
     ws_n: [u32; 3],
     ws_s: [u32; 3],
     sram_n: u32,
+    postflg: u8,
 }
 
 impl Default for SystemControl {
@@ -109,6 +110,7 @@ impl Default for SystemControl {
             ws_n: [0; 3],
             ws_s: [0; 3],
             sram_n: 0,
+            postflg: 0,
         };
         s.recompute_waitcnt();
         s
@@ -190,7 +192,8 @@ impl Bus for SystemControl {
         match addr {
             0x204 => self.waitcnt as u8,
             0x205 => (self.waitcnt >> 8) as u8,
-            _ => 0x69,
+            0x300 => self.postflg,
+            _ => 0,
         }
     }
 
@@ -203,6 +206,9 @@ impl Bus for SystemControl {
             0x205 => {
                 self.waitcnt.set_bit_range(8..16, value as u16);
                 self.recompute_waitcnt();
+            }
+            0x300 => {
+                self.postflg = (self.postflg & 0x01) | (value & 0x01);
             }
             0x301 => {
                 self.power = match value.bit(7) {

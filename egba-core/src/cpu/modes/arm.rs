@@ -416,7 +416,7 @@ impl CPU {
                     self.restore_spsr();
                 }
 
-                addr += 4;
+                addr = addr.wrapping_add(4);
             }
         }
 

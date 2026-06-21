@@ -53,11 +53,19 @@ impl GBA {
         cpu.set_mode(OperatingMode::sys);
         cpu.cpsr.operating_state = OperatingState::ARM;
         cpu.cpsr.irq_disable_bit = false;
-        cpu.cpsr.fiq_disable_bit = false;
+        cpu.cpsr.fiq_disable_bit = true;
         cpu.reg[SP_INDEX] = 0x0300_7F00;
+        cpu.reg[crate::cpu::cpu::LR_INDEX] = 0x0800_0000;
         cpu.reg[PC_INDEX] = 0x0800_0000;
+        cpu.banks[OperatingMode::usr.current_bank_index()].lr = 0x0800_0000;
 
         memory.bios_readable = false;
+        memory.last_bios_value = std::cell::Cell::new(0xE129F000);
+        memory.write_byte(0x0400_0300, 0x01);
+        memory.write_byte(0x0400_0000, 0x80);
+        memory.write_byte(0x0400_0088, 0x00);
+        memory.write_byte(0x0400_0089, 0x02);
+
         cpu.pipeline[1] = cpu.fetch(&mut memory);
         cpu.pipeline[2] = cpu.fetch(&mut memory);
 

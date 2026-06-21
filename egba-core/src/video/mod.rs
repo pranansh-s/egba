@@ -105,12 +105,12 @@ impl Video {
                 }
 
                 event = VideoEvent::HBlank;
-
-                if self.dispstat.bit(4) {
-                    irq = Some(InterruptType::HBlank);
-                }
             } else {
                 event = VideoEvent::HBlankInVBlank;
+            }
+
+            if self.dispstat.bit(4) {
+                irq = Some(InterruptType::HBlank);
             }
         }
 

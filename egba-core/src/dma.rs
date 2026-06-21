@@ -141,7 +141,11 @@ impl Dma {
         let mut src = self.channels[ch].internal_src & src_mask;
         let mut dst = self.channels[ch].internal_dst & dst_mask;
 
+        memory.dma_tick(2);
         for _ in 0..count {
+            let c_src = memory.dma_access_cycles(src, step);
+            let c_dst = memory.dma_access_cycles(dst, step);
+            memory.dma_tick(c_src + c_dst);
             if word32 {
                 let val = memory.dma_read_word(src);
                 memory.dma_write_word(dst, val);
@@ -416,4 +420,6 @@ pub(crate) trait DmaMemory {
     fn dma_read_word(&self, addr: u32) -> u32;
     fn dma_write_hword(&mut self, addr: u32, val: u16);
     fn dma_write_word(&mut self, addr: u32, val: u32);
+    fn dma_access_cycles(&mut self, addr: u32, width: u32) -> u32 { let _ = (addr, width); 1 }
+    fn dma_tick(&mut self, cycles: u32) { let _ = cycles; }
 }
