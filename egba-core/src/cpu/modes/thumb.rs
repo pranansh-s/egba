@@ -356,30 +356,7 @@ impl CPU {
     }
 
     fn thumb_format15(&mut self, bus: &mut impl Bus, l: bool, rb: usize, r_list: u8) {
-        let mut addr = self.reg[rb];
-        let rb_in_list = r_list.bit(rb);
-
-        for r in 0..=7 {
-            if r_list.bit(r) {
-                let c = bus.access_cycles(addr, 4);
-                bus.tick(c);
-                if l {
-                    self.reg[r] = bus.read_word(addr);
-                } else {
-                    bus.write_word(addr, self.reg[r]);
-                }
-
-                addr = addr.wrapping_add(4);
-            }
-        }
-
-        if l {
-            bus.tick(1);
-        }
-
-        if !l || !rb_in_list {
-            self.reg[rb] = addr;
-        }
+        self.arm_LDM_STM(bus, l, false, true, false, true, rb, r_list as u16);
     }
 
     fn thumb_format16(&mut self, bus: &mut impl Bus, cond: usize, offset: u8) {

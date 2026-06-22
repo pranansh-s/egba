@@ -50,10 +50,10 @@ impl CPU {
             "0001_0?00_1111_????_0000_0000_0000" => {
                 self.arm_MRS(inst.bit(22), bit_r!(inst, 12..16))
             }
-            "00?1_0?10_100?_1111_????_????_????" => self.arm_MSR(
+            "00?1_0?10_????_1111_????_????_????" => self.arm_MSR(
                 inst.bit(25),
                 inst.bit(22),
-                !inst.bit(16),
+                bit_r!(inst, 16..20),
                 bit_r!(inst, 0..12),
             ),
 
@@ -137,16 +137,23 @@ impl CPU {
         if l {
             self.reg[LR_INDEX] = self.arm_pc().wrapping_add(4);
         }
-        self.reg[PC_INDEX] = ((self.reg[PC_INDEX] as i32) + offset) as u32;
+        self.reg[PC_INDEX] = self.reg[PC_INDEX].wrapping_add(offset as u32);
         self.flush_pipeline(bus);
     }
 
     fn arm_MRS(&mut self, p: bool, rd: usize) {
-        let psr = if p { self.spsr } else { self.cpsr.into() };
+        let psr = if p
+            && self.cpsr.mode != OperatingMode::usr
+            && self.cpsr.mode != OperatingMode::sys
+        {
+            self.spsr
+        } else {
+            self.cpsr.into()
+        };
         self.reg[rd] = psr;
     }
 
-    fn arm_MSR(&mut self, i: bool, p: bool, f: bool, op: usize) {
+    fn arm_MSR(&mut self, i: bool, p: bool, field_mask: usize, op: usize) {
         let bits = if i {
             let imm = bit_r!(op, 0..8) as u32;
             let rotate = 2 * bit_r!(op, 8..12) as u32;
@@ -154,21 +161,31 @@ impl CPU {
         } else {
             self.reg[bit_r!(op, 0..4)]
         };
-        let mut mask = if f { 0xF000_0000 } else { 0xF00000DF };
+
+        let mut mask: u32 = 0;
+        if field_mask & 0b0001 != 0 { mask |= 0x0000_00FF; }
+        if field_mask & 0b0010 != 0 { mask |= 0x0000_FF00; }
+        if field_mask & 0b0100 != 0 { mask |= 0x00FF_0000; }
+        if field_mask & 0b1000 != 0 { mask |= 0xFF00_0000; }
+
+        mask &= !0x0000_0020;
 
         if p {
-            self.spsr = (self.spsr & !mask) | (bits & mask);
-        } else {
-            if self.cpsr.mode == OperatingMode::usr {
-                mask &= 0xF000_0000;
+            if self.cpsr.mode != OperatingMode::usr && self.cpsr.mode != OperatingMode::sys {
+                self.spsr = (self.spsr & !mask) | (bits & mask);
             }
-            let new_cpsr = (u32::from(self.cpsr) & !mask) | (bits & mask);
-            let new_psr: ProgramStatusRegister = new_cpsr.into();
-            if new_psr.mode != self.cpsr.mode {
-                self.set_mode(new_psr.mode);
-            }
-            self.cpsr = new_psr;
+            return;
         }
+
+        if self.cpsr.mode == OperatingMode::usr {
+            mask &= 0xF000_0000;
+        }
+        let new_cpsr = (u32::from(self.cpsr) & !mask) | (bits & mask);
+        let new_psr: ProgramStatusRegister = new_cpsr.into();
+        if new_psr.mode != self.cpsr.mode {
+            self.set_mode(new_psr.mode);
+        }
+        self.cpsr = new_psr;
     }
 
     fn arm_data_proc(
@@ -182,6 +199,7 @@ impl CPU {
         operand2: usize,
     ) {
         let update_cpsr = s && rd != PC_INDEX;
+        let carry_in = self.cpsr.c_condition_bit;
         let op2 = if i {
             let imm = bit_r!(operand2, 0..8) as u32;
             let rotate = 2 * bit_r!(operand2, 8..12) as u32;
@@ -191,7 +209,11 @@ impl CPU {
             }
             rotated
         } else {
-            self.shift_by_reg(operand2, update_cpsr)
+            let v = self.shift_by_reg(operand2, update_cpsr);
+            if operand2.bit(4) {
+                bus.tick(1);
+            }
+            v
         };
 
         let op = if !i && rn == PC_INDEX && operand2.bit(4) {
@@ -206,9 +228,9 @@ impl CPU {
             0b0010 => self.SUB(op, op2, update_cpsr),
             0b0011 => self.SUB(op2, op, update_cpsr),
             0b0100 => self.ADD(op, op2, update_cpsr),
-            0b0101 => self.ADC(op, op2, update_cpsr, self.cpsr.c_condition_bit),
-            0b0110 => self.SBC(op, op2, update_cpsr, self.cpsr.c_condition_bit),
-            0b0111 => self.SBC(op2, op, update_cpsr, self.cpsr.c_condition_bit),
+            0b0101 => self.ADC(op, op2, update_cpsr, carry_in),
+            0b0110 => self.SBC(op, op2, update_cpsr, carry_in),
+            0b0111 => self.SBC(op2, op, update_cpsr, carry_in),
             0b1000 => self.AND(op, op2),
             0b1001 => self.EOR(op, op2),
             0b1010 => self.SUB(op, op2, true),
@@ -267,22 +289,25 @@ impl CPU {
 
         let addr = if p { writeback_value } else { original_rn };
         let writeback = w || !p;
-
+        let t_bit = w && !p;
         let pre_mode = self.cpsr.mode;
-        if w && !p {
-            self.set_mode(OperatingMode::usr);
-        }
 
         let width = if b { 1 } else { 4 };
         let c = bus.access_cycles(addr, width);
         bus.tick(c);
 
         if l {
+            if t_bit {
+                self.set_mode(OperatingMode::usr);
+            }
             let loaded = if b {
                 bus.read_byte(addr) as u32
             } else {
                 bus.read_word(addr).rotate_right(8 * (addr & 0b11))
             };
+            if t_bit {
+                self.set_mode(pre_mode);
+            }
 
             bus.tick(1);
 
@@ -302,19 +327,21 @@ impl CPU {
                 self.reg[rd]
             };
 
+            if t_bit {
+                self.set_mode(OperatingMode::usr);
+            }
             if b {
                 bus.write_byte(addr, val as u8);
             } else {
                 bus.write_word(addr, val);
             }
+            if t_bit {
+                self.set_mode(pre_mode);
+            }
 
             if writeback {
                 self.reg[rn] = writeback_value;
             }
-        }
-
-        if w && !p {
-            self.set_mode(pre_mode);
         }
     }
 
@@ -434,6 +461,10 @@ impl CPU {
             self.reg[rn] = writeback_value;
         }
 
+        let pc_store_offset = match self.cpsr.operating_state {
+            OperatingState::ARM => 4,
+            OperatingState::THUMB => 2,
+        };
         let mut addr = base_address;
         for r in 0..=PC_INDEX {
             if xfer_list.bit(r) {
@@ -443,7 +474,7 @@ impl CPU {
                     self.reg[r] = bus.read_word(addr);
                 } else {
                     let val = if r == PC_INDEX {
-                        self.reg[PC_INDEX].wrapping_add(4)
+                        self.reg[PC_INDEX].wrapping_add(pc_store_offset)
                     } else {
                         self.reg[r]
                     };

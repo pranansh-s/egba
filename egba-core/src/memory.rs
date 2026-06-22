@@ -29,12 +29,11 @@ pub(crate) struct Memory {
     pub(crate) bios_readable: bool,
     pub(crate) last_bios_value: std::cell::Cell<u32>,
 
-    last_bus_value: u8,
+    last_bus_value: std::cell::Cell<u8>,
 
     pub(crate) video_cycle_debt: u32,
     pub(crate) pending_sound_dma: u8,
     pub(crate) bus_cycles: u64,
-    pending_tick: u32,
     pub(crate) video_events: Vec<(VideoEvent, Option<InterruptType>)>,
 
     last_rom_access: u32,
@@ -57,11 +56,10 @@ impl Memory {
             cartridge,
             bios_readable: true,
             last_bios_value: std::cell::Cell::new(0xE129F000),
-            last_bus_value: 0,
+            last_bus_value: std::cell::Cell::new(0),
             video_cycle_debt: 0,
             pending_sound_dma: 0,
             bus_cycles: 0,
-            pending_tick: 0,
             video_events: Vec::with_capacity(256),
             last_rom_access: !0,
         }
@@ -71,17 +69,9 @@ impl Memory {
 impl Bus for Memory {
     #[inline]
     fn read_byte(&self, addr: u32) -> u8 {
-        match addr {
+        let value = match addr {
             0x0000_0000..=0x0000_3FFF => {
                 if self.bios_readable {
-                    let aligned = addr & !0b11;
-                    let word = u32::from_le_bytes([
-                        self.bios.read(aligned),
-                        self.bios.read(aligned + 1),
-                        self.bios.read(aligned + 2),
-                        self.bios.read(aligned + 3),
-                    ]);
-                    self.last_bios_value.set(word);
                     self.bios.read(addr)
                 } else {
                     let word = self.last_bios_value.get();
@@ -101,7 +91,7 @@ impl Bus for Memory {
                     0x130..=0x133 => self.keypad.read_byte(offset),
                     0x200..=0x203 | 0x208..=0x209 => self.interrupt.read_byte(offset),
                     0x204..=0x205 | 0x300 => self.system.read_byte(offset),
-                    _ => self.last_bus_value,
+                    _ => self.last_bus_value.get(),
                 }
             }
             0x0500_0000..=0x05FF_FFFF => self.video.palette[(addr & 0x3FF) as usize],
@@ -117,12 +107,15 @@ impl Bus for Memory {
             0x0700_0000..=0x07FF_FFFF => self.video.oam[(addr & 0x3FF) as usize],
             0x0800_0000..=0x0FFF_FFFF => self.cartridge.read_byte(addr),
 
-            _ => self.last_bus_value,
-        }
+            _ => self.last_bus_value.get(),
+        };
+        self.last_bus_value.set(value);
+        value
     }
 
     #[inline]
     fn write_byte(&mut self, addr: u32, value: u8) {
+        self.last_bus_value.set(value);
         match addr {
             0x0200_0000..=0x02FF_FFFF => self.ewram.write_byte(addr & 0x3_FFFF, value),
             0x0300_0000..=0x03FF_FFFF => self.iwram.write_byte(addr & 0x7FFF, value),
@@ -173,6 +166,23 @@ impl Bus for Memory {
     fn read_hword(&self, addr: u32) -> u16 {
         let addr = addr & !0b1;
         match addr {
+            0x0000_0000..=0x0000_3FFF => {
+                if self.bios_readable {
+                    let aligned = addr & !0b11;
+                    let word = u32::from_le_bytes([
+                        self.bios.read(aligned),
+                        self.bios.read(aligned + 1),
+                        self.bios.read(aligned + 2),
+                        self.bios.read(aligned + 3),
+                    ]);
+                    self.last_bios_value.set(word);
+                    u16::from_le_bytes([self.bios.read(addr), self.bios.read(addr + 1)])
+                } else {
+                    let word = self.last_bios_value.get();
+                    let shift = (addr & 0b11) * 8;
+                    (word >> shift) as u16
+                }
+            }
             0x0200_0000..=0x02FF_FFFF => {
                 let off = (addr & 0x3_FFFF) as usize;
                 u16::from_le_bytes([self.ewram[off], self.ewram[off + 1]])
@@ -206,6 +216,20 @@ impl Bus for Memory {
     fn read_word(&self, addr: u32) -> u32 {
         let addr = addr & !0b11;
         match addr {
+            0x0000_0000..=0x0000_3FFF => {
+                if self.bios_readable {
+                    let word = u32::from_le_bytes([
+                        self.bios.read(addr),
+                        self.bios.read(addr + 1),
+                        self.bios.read(addr + 2),
+                        self.bios.read(addr + 3),
+                    ]);
+                    self.last_bios_value.set(word);
+                    word
+                } else {
+                    self.last_bios_value.get()
+                }
+            }
             0x0200_0000..=0x02FF_FFFF => {
                 let off = (addr & 0x3_FFFF) as usize;
                 u32::from_le_bytes([
@@ -385,16 +409,6 @@ impl Bus for Memory {
 }
 
 impl Memory {
-    #[inline]
-    pub(crate) fn flush_pending_ticks(&mut self) {
-        let n = self.pending_tick;
-        if n == 0 {
-            return;
-        }
-        self.pending_tick = 0;
-        self.advance_timers_and_apu(n);
-    }
-
     #[inline]
     fn advance_timers_and_apu(&mut self, n: u32) {
         self.apu.step(n);
@@ -635,11 +649,90 @@ mod tests {
     }
 
     #[test]
+    fn open_bus_returns_last_value_driven_on_bus() {
+        // GBATEK "Unused Memory Area": reads from unmapped IO addresses
+        // (and other open-bus regions) return the last byte transferred on
+        // the bus, not a stale zero.
+        let mut m = build_memory();
+        // Drive 0xAB onto the bus via an EWRAM write
+        m.write_byte(0x0200_0010, 0xAB);
+        let v1 = m.read_byte(0x0400_0810);     // unmapped IO above 0x4000_03FE? no — this hits 0x800
+        // Try unmapped IO inside 0x0..0x3FF range: anything inside the IO
+        // range that has no register decode falls through to last_bus_value.
+        let v2 = m.read_byte(0x0400_0058);     // gap between video (0..0x56) and apu (0x60..)
+        assert_eq!(v2, 0xAB, "open-bus IO gap returns last bus byte");
+
+        m.write_byte(0x0200_0020, 0x42);
+        let v3 = m.read_byte(0x0400_0058);
+        assert_eq!(v3, 0x42, "subsequent write updates open-bus latch");
+
+        // Also a pure read should update the latch
+        m.ewram.write_byte(0x100, 0x99);
+        let _ = m.read_byte(0x0200_0100);
+        let v4 = m.read_byte(0x0400_0058);
+        assert_eq!(v4, 0x99, "read also updates open-bus latch");
+
+        let _ = v1;  // 0x4000_0810 is above 0x3FE — out of IO range, falls to unmapped 0x0500_0000.. gap, same behavior
+    }
+
+    fn build_memory_with_bios_bytes(bios_bytes: &[u8]) -> Memory {
+        let mut full = vec![0u8; 0x4000];
+        full[..bios_bytes.len()].copy_from_slice(bios_bytes);
+        let bios = Bios::new(Rom::new(&full)).expect("bios");
+        let cart = Cartridge::new(
+            Rom::new(&vec![0u8; 0x1000]),
+            &PathBuf::from("/nonexistent/no.sav"),
+        )
+        .expect("cart");
+        Memory::new(bios, cart)
+    }
+
+    #[test]
+    fn bios_open_bus_latch_not_polluted_by_byte_reads() {
+        let mut bios_bytes = vec![0u8; 0x4000];
+        bios_bytes[0x10] = 0xDD;
+        bios_bytes[0x11] = 0xCC;
+        bios_bytes[0x12] = 0xBB;
+        bios_bytes[0x13] = 0xAA;
+        bios_bytes[0x20] = 0x44;
+        bios_bytes[0x21] = 0x33;
+        bios_bytes[0x22] = 0x22;
+        bios_bytes[0x23] = 0x11;
+        let mut m = build_memory_with_bios_bytes(&bios_bytes);
+
+        m.bios_readable = true;
+        let word = m.read_word(0x10);
+        assert_eq!(word, 0xAABBCCDD, "BIOS word read returns planted bytes");
+
+        m.bios_readable = true;
+        let _ = m.read_byte(0x20);
+
+        m.bios_readable = false;
+        let byte = m.read_byte(0x100);
+        assert_eq!(
+            byte, 0xDD,
+            "BIOS open-bus latch must reflect the last word fetch (0xAABBCCDD), not be poisoned by the byte read at 0x20"
+        );
+    }
+
+    #[test]
+    fn timer0_overflow_requests_irq_through_memory() {
+        let mut m = build_memory();
+        m.write_byte(0x0400_0100, 0xFF);
+        m.write_byte(0x0400_0101, 0xFF);
+        m.write_byte(0x0400_0102, 0b1100_0000);
+        m.write_byte(0x0400_0200, 0x08);
+        m.write_byte(0x0400_0208, 0x01);
+        m.tick(8);
+        let if_byte = m.read_byte(0x0400_0202);
+        assert_ne!(if_byte & 0x08, 0, "Timer0 overflow with IRQ-enable must set IF bit 3");
+    }
+
+    #[test]
     fn memory_tick_advances_enabled_timer() {
         let mut m = build_memory();
         m.write_byte(0x0400_0102, 0x80);
         m.tick(50);
-        m.flush_pending_ticks();
         let lo = m.read_byte(0x0400_0100);
         let hi = m.read_byte(0x0400_0101);
         let counter = (lo as u16) | ((hi as u16) << 8);

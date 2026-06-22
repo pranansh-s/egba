@@ -166,9 +166,9 @@ egba/
 | Test ROM | Status | Notes |
 |----------|--------|-------|
 | GBA BIOS boot animation | ✅ Passes | Nintendo logo scrolls, palette fades, jumps to cart entry |
-| `ags_test.gba` (Nintendo AGS aging) | 🟡 Partial | Boots and renders main menu. Passes KEY INPUT; fails MEMORY (1/9 pass), LCD (5/7 pass), TIMER (0/3 pass), DMA (6/9 pass), and INTERRUPT (3/7 pass) |
+| `ags_test.gba` (Nintendo AGS aging) | 🟡 Partial | Boots and renders main menu. Passes KEY INPUT; fails MEMORY (6/9 pass), LCD (6/7 pass), TIMER (2/3 pass), DMA (7/9 pass), and INTERRUPT (5/7 pass) |
 | `armwrestler.gba` | ✅ Passes | All ARM and Thumb instruction tests pass (23/23) |
-| jsmolka tests | 🟡 Partial | Only passes memory tests; fails thumb, nes, and bios |
+| jsmolka tests | 🟡 Partial | Only passes memory and thumb tests; fails arm, nes, and bios |
 | PeterLemon `GBA-Tests` | ⬜ Not yet run | CPU instruction and BIOS SWI low-level suite |
 | mGBA tests | ⬜ Not yet run | Timer, DMA, and APU timing correctness suite |
 | TONC demos (`first.gba`, `bm_modes.gba`, ...) | ⬜ Not yet run | Standard homebrew demos testing various PPU/interrupt layouts |
@@ -181,6 +181,6 @@ Legend: ✅ Pass · 🟡 Partial · ❌ Fails · ⬜ Not yet validated.
 |:---:|:---:|:---:|
 | ![GBA BIOS Boot](assets/ss1.png) | ![Nintendo AGS Aging](assets/ags_test.png) | ![ARMwrestler ALU](assets/alu_test.png) |
 
-| jsmolka `memory` | jsmolka `ppu/hello` | jsmolka `ppu/shades` | jsmolka `ppu/stripes` |
+| jsmolka | jsmolka `ppu/hello` | jsmolka `ppu/shades` | jsmolka `ppu/stripes` |
 |:---:|:---:|:---:|:---:|
 | ![jsmolka memory](assets/memory_test.png) | ![jsmolka ppu/hello](assets/hello_test.png) | ![jsmolka ppu/shades](assets/shades_test.png) | ![jsmolka ppu/stripes](assets/stripes_test.png) |

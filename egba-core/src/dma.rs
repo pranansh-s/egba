@@ -297,7 +297,6 @@ mod tests {
     struct FakeMem {
         src: Vec<u32>,
         dst: Vec<u32>,
-        reads: Vec<u32>,
         writes: Vec<(u32, u32)>,
     }
 
@@ -324,7 +323,6 @@ mod tests {
         FakeMem {
             src,
             dst: vec![],
-            reads: vec![],
             writes: vec![],
         }
     }

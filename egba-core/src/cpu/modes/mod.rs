@@ -31,12 +31,11 @@ impl fmt::Display for ShiftType {
 
 impl ShiftType {
     pub fn from_bits(bits: usize) -> Self {
-        match bits {
+        match bits & 0b11 {
             0b00 => ShiftType::LSL,
             0b01 => ShiftType::LSR,
             0b10 => ShiftType::ASR,
-            0b11 => ShiftType::ROR,
-            _ => unreachable!(),
+            _ => ShiftType::ROR,
         }
     }
 }

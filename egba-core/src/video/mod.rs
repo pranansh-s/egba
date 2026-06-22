@@ -239,11 +239,7 @@ impl Video {
     }
 
     pub(crate) fn sign_extend_28(&self, val: u32) -> i32 {
-        if val & (1 << 27) != 0 {
-            (val | 0xF000_0000) as i32
-        } else {
-            (val & 0x0FFF_FFFF) as i32
-        }
+        ((val << 4) as i32) >> 4
     }
 }
 

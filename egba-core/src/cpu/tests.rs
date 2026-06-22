@@ -1018,6 +1018,33 @@ mod tests {
         }
     }
 
+    #[test]
+    fn arm_b_taken_costs_three_cycles() {
+        let ticks = run_inst_ticks(0xEA00_0000, |_c| {});
+        assert_eq!(ticks, 3, "ARM B taken: 2S fetch refill + 1I = 3 cycles in IWRAM");
+    }
+
+    #[test]
+    fn arm_bx_costs_three_cycles() {
+        let ticks = run_inst_ticks(0xE12F_FF11, |c| {
+            c.reg[1] = 0x10;
+        });
+        assert_eq!(ticks, 3, "ARM BX taken: 2S fetch refill + 1I = 3 cycles in IWRAM");
+    }
+
+    #[test]
+    fn arm_data_proc_reg_shift_costs_two_cycles() {
+        let imm_shift = run_inst_ticks(0xE1A0_0201, |c| {
+            c.reg[1] = 1;
+        });
+        let reg_shift = run_inst_ticks(0xE1A0_0211, |c| {
+            c.reg[1] = 1;
+            c.reg[2] = 4;
+        });
+        assert_eq!(imm_shift, 1, "MOV r0, r1, LSL #4 (imm shift): 1S = 1 cycle");
+        assert_eq!(reg_shift, 2, "MOV r0, r1, LSL r2 (reg shift): 1S + 1I = 2 cycles");
+    }
+
     fn run_thumb_inst_ticks(inst: u16, setup: impl FnOnce(&mut CPU)) -> u32 {
         let mut cpu = CPU::new();
         let mut bus = TestBus::new(0x100);
@@ -1592,5 +1619,500 @@ mod tests {
             });
             assert_eq!(cpu.reg[0], expected, "{label}");
         }
+    }
+
+    #[test]
+    fn arm_data_proc_imm_rotate_preserves_carry_in_for_adc_sbc() {
+        // ADCS/SBCS Rd, #imm where the rotated immediate's shifter carry-out
+        // must NOT clobber the carry-in used by the arithmetic itself.
+        // Per ARM ARM: shifter carry-out becomes the new C only for logical ops;
+        // ADC/SBC/RSC take the pre-shifter CPSR.C as carry-in and set C from
+        // the arithmetic carry-out.
+        //
+        // Encodings:
+        //   ADCS r0, r0, #imm = 0xE2B0_0??? (opcode=0101, S=1, Rn=Rd=r0)
+        //   SBCS r0, r0, #imm = 0xE2D0_0??? (opcode=0110, S=1, Rn=Rd=r0)
+        // operand2 = (rot_4bit << 8) | imm_8bit, immediate = imm.rotate_right(2 * rot_4bit).
+        let cases: [(u32, u32, bool, u32, &str); 6] = [
+            (
+                0xE2B0_0102, 0, true, 0x8000_0001,
+                "ADCS r0, #0x80000000 with C=1: shifter bit31=1 must not be re-read as carry-in",
+            ),
+            (
+                0xE2B0_0207, 0, true, 0x7000_0001,
+                "ADCS r0, #0x70000000 with C=1: shifter bit31=0 must not clobber carry-in (regression: jsmolka ARM #228)",
+            ),
+            (
+                0xE2B0_0102, 0, false, 0x8000_0000,
+                "ADCS r0, #0x80000000 with C=0: shifter bit31=1 must not inject phantom carry-in",
+            ),
+            (
+                0xE2B0_0001, 0, true, 0x0000_0002,
+                "ADCS r0, #1 (rotate=0, shifter does not touch C): carry-in preserved",
+            ),
+            (
+                0xE2D0_0207, 1, true, 0x9000_0001,
+                "SBCS r0=1, #0x70000000 with C=1 (no borrow): 1 - 0x70000000 = 0x90000001",
+            ),
+            (
+                0xE2D0_0102, 0, false, 0x7FFF_FFFF,
+                "SBCS r0=0, #0x80000000 with C=0 (borrow): -0x80000000 - 1 = 0x7FFFFFFF",
+            ),
+        ];
+        for (inst, r0_init, c_in, expected, label) in cases {
+            let (cpu, _bus) = run_arm(inst, |c, _| {
+                c.reg[0] = r0_init;
+                c.cpsr.c_condition_bit = c_in;
+            });
+            assert_eq!(cpu.reg[0], expected, "{label}");
+        }
+    }
+
+    #[test]
+    fn thumb_ldmia_empty_rlist_writeback_plus_0x40() {
+        // LDMIA r0!, {} = 0xC800. ARM7TDMI quirk: empty rlist still transfers
+        // one word at the base and writes back base + 0x40
+        // (jsmolka THUMB test #227).
+        let mut cpu = CPU::new();
+        let mut bus = TestBus::new(0x1000);
+        bus.write_hword_at(0x00, 0xC800);
+        bus.write_hword_at(0x02, 0x46C0);
+        bus.write_hword_at(0x04, 0x46C0);
+        bus.write_word_at(0x100, 0x0000_0050);
+
+        cpu.cpsr.operating_state = OperatingState::THUMB;
+        cpu.cpsr.mode = OperatingMode::sys;
+        cpu.reg[0] = 0x100;
+        cpu.reg[PC_INDEX] = 0x00;
+        cpu.flush_pipeline(&mut bus);
+        cpu.step(&mut bus);
+
+        assert_eq!(
+            cpu.reg[0], 0x140,
+            "LDMIA empty rlist: writeback = base + 0x40 (regression: jsmolka THUMB #227)"
+        );
+    }
+
+    #[test]
+    fn arm_ldrh_ldrsh_ldrsb_misalign_scenarios() {
+        // ARM7TDMI / GBATEK half + signed transfer rules:
+        //   LDRH aligned: load 16-bit, zero-extend.
+        //   LDRH addr&1=1: load 16-bit at addr&~1, rotate right by 8.
+        //   LDRSH aligned: load 16-bit, sign-extend.
+        //   LDRSH addr&1=1: act like LDRSB at addr (byte + sign-extend).
+        //   LDRSB: load 8-bit, sign-extend.
+        //
+        // Encodings used (Rn=r1, Rd=r0, imm offset = 0):
+        //   LDRH  r0, [r1] = 0xE1D1_00B0
+        //   LDRSB r0, [r1] = 0xE1D1_00D0
+        //   LDRSH r0, [r1] = 0xE1D1_00F0
+        struct Case {
+            inst: u32,
+            addr: u32,
+            mem_hword_aligned: u16,
+            mem_byte_at_addr: u8,
+            expected: u32,
+            label: &'static str,
+        }
+        let cases = [
+            Case {
+                inst: 0xE1D1_00B0, addr: 0x200, mem_hword_aligned: 0xCAFE,
+                mem_byte_at_addr: 0, expected: 0x0000_CAFE,
+                label: "LDRH aligned: zero-extend halfword",
+            },
+            Case {
+                inst: 0xE1D1_00B0, addr: 0x201, mem_hword_aligned: 0xBEEF,
+                mem_byte_at_addr: 0, expected: 0xEF00_00BE,
+                label: "LDRH addr&1=1: rotate right by 8",
+            },
+            Case {
+                inst: 0xE1D1_00F0, addr: 0x200, mem_hword_aligned: 0x8000,
+                mem_byte_at_addr: 0, expected: 0xFFFF_8000,
+                label: "LDRSH aligned negative halfword: sign-extend",
+            },
+            Case {
+                inst: 0xE1D1_00F0, addr: 0x200, mem_hword_aligned: 0x7FFF,
+                mem_byte_at_addr: 0, expected: 0x0000_7FFF,
+                label: "LDRSH aligned positive halfword: sign-extend",
+            },
+            Case {
+                inst: 0xE1D1_00F0, addr: 0x201, mem_hword_aligned: 0x8000,
+                mem_byte_at_addr: 0x80, expected: 0xFFFF_FF80,
+                label: "LDRSH addr&1=1 negative byte: sign-extend BYTE (GBATEK quirk)",
+            },
+            Case {
+                inst: 0xE1D1_00F0, addr: 0x201, mem_hword_aligned: 0x7F00,
+                mem_byte_at_addr: 0x7F, expected: 0x0000_007F,
+                label: "LDRSH addr&1=1 positive byte: sign-extend BYTE",
+            },
+            Case {
+                inst: 0xE1D1_00D0, addr: 0x200, mem_hword_aligned: 0x00FF,
+                mem_byte_at_addr: 0xFF, expected: 0xFFFF_FFFF,
+                label: "LDRSB negative byte: sign-extend to 32-bit",
+            },
+            Case {
+                inst: 0xE1D1_00D0, addr: 0x200, mem_hword_aligned: 0x007F,
+                mem_byte_at_addr: 0x7F, expected: 0x0000_007F,
+                label: "LDRSB positive byte: sign-extend to 32-bit",
+            },
+        ];
+        for c in cases {
+            let (cpu, _bus) = run_arm(c.inst, |cp, b| {
+                cp.reg[1] = c.addr;
+                b.write_hword_at(c.addr & !1, c.mem_hword_aligned);
+                if c.mem_byte_at_addr != 0 {
+                    let a = c.addr as usize;
+                    b.mem[a] = c.mem_byte_at_addr;
+                }
+            });
+            assert_eq!(cpu.reg[0], c.expected, "{}", c.label);
+        }
+    }
+
+    #[test]
+    fn arm_umull_smull_polarity_scenarios() {
+        // Locks the bit-22 = signed convention. Encodings:
+        //   UMULL r3, r4, r1, r2 = 0xE084_3291  (RdLo=r3, RdHi=r4, Rs=r2, Rm=r1)
+        //   SMULL r3, r4, r1, r2 = 0xE0C4_3291
+        //   UMLAL r3, r4, r1, r2 = 0xE0A4_3291
+        //   SMLAL r3, r4, r1, r2 = 0xE0E4_3291
+        struct Case {
+            inst: u32,
+            rm: u32,
+            rs: u32,
+            acc_hi: u32,
+            acc_lo: u32,
+            expected_hi: u32,
+            expected_lo: u32,
+            label: &'static str,
+        }
+        let cases = [
+            Case {
+                inst: 0xE084_3291, rm: 1, rs: 0xFFFF_FFFF, acc_hi: 0, acc_lo: 0,
+                expected_hi: 0x0000_0000, expected_lo: 0xFFFF_FFFF,
+                label: "UMULL 1 * 0xFFFF_FFFF: unsigned product = 0x0_FFFFFFFF",
+            },
+            Case {
+                inst: 0xE0C4_3291, rm: 1, rs: 0xFFFF_FFFF, acc_hi: 0, acc_lo: 0,
+                expected_hi: 0xFFFF_FFFF, expected_lo: 0xFFFF_FFFF,
+                label: "SMULL 1 * -1: signed product = -1 (0xFFFFFFFF_FFFFFFFF)",
+            },
+            Case {
+                inst: 0xE0C4_3291, rm: 2, rs: 0xFFFF_FFFF, acc_hi: 0, acc_lo: 0,
+                expected_hi: 0xFFFF_FFFF, expected_lo: 0xFFFF_FFFE,
+                label: "SMULL 2 * -1 = -2",
+            },
+            Case {
+                inst: 0xE0A4_3291, rm: 1, rs: 0xFFFF_FFFF,
+                acc_hi: 0x0000_0001, acc_lo: 0x0000_0001,
+                expected_hi: 0x0000_0002, expected_lo: 0x0000_0000,
+                label: "UMLAL accumulate: 0x1_00000001 + 0xFFFFFFFF = 0x2_00000000",
+            },
+            Case {
+                inst: 0xE0E4_3291, rm: 2, rs: 0xFFFF_FFFF,
+                acc_hi: 0x0000_0000, acc_lo: 0x0000_0003,
+                expected_hi: 0x0000_0000, expected_lo: 0x0000_0001,
+                label: "SMLAL signed accumulate: 3 + (-2) = 1, sign-ext carry collapses to 0",
+            },
+        ];
+        for c in cases {
+            let (cpu, _bus) = run_arm(c.inst, |cp, _| {
+                cp.reg[1] = c.rm;
+                cp.reg[2] = c.rs;
+                cp.reg[3] = c.acc_lo;
+                cp.reg[4] = c.acc_hi;
+            });
+            assert_eq!(cpu.reg[4], c.expected_hi, "{} (RdHi)", c.label);
+            assert_eq!(cpu.reg[3], c.expected_lo, "{} (RdLo)", c.label);
+        }
+    }
+
+    #[test]
+    fn thumb_stmia_empty_rlist_stored_pc_matches_mov_from_pc() {
+        // jsmolka THUMB #229 / GBATEK: STMIA empty rlist stores R15 value
+        // such that the stored word matches what a following `mov rN, pc`
+        // would observe. In THUMB the visible PC is $+4, so the inst right
+        // after the STM (`mov rN, pc` at $+2) reads $+6. Therefore the
+        // stored value at [Rb] must equal inst_addr_of_STM + 6.
+        let mut cpu = CPU::new();
+        let mut bus = TestBus::new(0x1000);
+        bus.write_hword_at(0x00, 0xC000);   // STMIA r0!, {} at X=0
+        bus.write_hword_at(0x02, 0x46C0);   // nop (mov r8, r8)
+        bus.write_hword_at(0x04, 0x46C0);
+
+        cpu.cpsr.operating_state = OperatingState::THUMB;
+        cpu.cpsr.mode = OperatingMode::sys;
+        cpu.reg[0] = 0x200;
+        cpu.reg[PC_INDEX] = 0x00;
+        cpu.flush_pipeline(&mut bus);
+        cpu.step(&mut bus);
+
+        assert_eq!(cpu.reg[0], 0x240, "empty rlist writeback = +0x40");
+        assert_eq!(
+            read_word(&bus, 0x200), 0x06,
+            "THUMB STM empty rlist stores PC = inst_addr + 6 (regression: jsmolka THUMB #229)"
+        );
+    }
+
+    #[test]
+    fn arm_movs_rotated_imm_shift_sets_n_and_c() {
+        // jsmolka ARM #229: MOV{S} r0, r0, ROR #8 with r0=0x80 must set
+        // N (bit31 of result) and C (carry-out of ROR = bit 7 of input).
+        // Encoding: 0xE1B0_0460 (I=0, opcode=MOV=1101, S=1, Rn=0, Rd=0,
+        // operand2 = shift_imm=8, type=ROR=11, Rm=0).
+        let (cpu, _bus) = run_arm(0xE1B0_0460, |c, _| {
+            c.reg[0] = 0x80;
+            c.cpsr.c_condition_bit = false;
+            c.cpsr.n_condition_bit = false;
+            c.cpsr.z_condition_bit = true;
+        });
+        assert_eq!(cpu.reg[0], 0x8000_0000, "MOVS r0, r0, ROR #8 with r0=0x80");
+        assert!(cpu.cpsr.c_condition_bit, "C = bit 7 of input (ROR carry-out)");
+        assert!(cpu.cpsr.n_condition_bit, "N = bit 31 of result");
+        assert!(!cpu.cpsr.z_condition_bit, "Z cleared");
+    }
+
+    #[test]
+    fn arm_mrs_spsr_in_usr_returns_cpsr() {
+        // MRS Rd, SPSR in usr/sys mode is UNPREDICTABLE per spec. Conventional
+        // behavior (matches commercial games' assumptions and other GBA cores):
+        // return CPSR instead of stale SPSR bank state.
+        //   MRS r0, SPSR = 0xE14F_0000
+        let mut cpu = CPU::new();
+        let mut bus = TestBus::new(0x1000);
+        bus.write_word_at(0x00, 0xE14F_0000);
+        bus.write_word_at(0x04, 0xE3A0_0000);
+        bus.write_word_at(0x08, 0xE3A0_0000);
+
+        cpu.cpsr.operating_state = OperatingState::ARM;
+        cpu.set_mode(OperatingMode::usr);
+        cpu.spsr = 0xDEAD_BEEF;
+        cpu.reg[PC_INDEX] = 0x00;
+        cpu.flush_pipeline(&mut bus);
+        cpu.step(&mut bus);
+
+        let expected: u32 = u32::from(cpu.cpsr);
+        assert_eq!(
+            cpu.reg[0], expected,
+            "MRS SPSR in usr mode returns CPSR, not stale spsr field (got 0x{:08X})",
+            cpu.reg[0]
+        );
+    }
+
+    #[test]
+    fn arm_msr_spsr_in_usr_is_ignored() {
+        // MSR SPSR_fsxc, #0xAA000010 in usr mode must not mutate the spsr
+        // field — there is no SPSR bank in usr/sys.
+        //   MSR SPSR_fsxc, #imm: 0xE36F_F??? (rot=0, imm=0xAA000010 not encodable;
+        //   simplify: use imm=0x10, rot=0 — only low byte set after rotate).
+        let mut cpu = CPU::new();
+        let mut bus = TestBus::new(0x1000);
+        bus.write_word_at(0x00, 0xE36F_F010);
+        bus.write_word_at(0x04, 0xE3A0_0000);
+        bus.write_word_at(0x08, 0xE3A0_0000);
+
+        cpu.cpsr.operating_state = OperatingState::ARM;
+        cpu.set_mode(OperatingMode::usr);
+        cpu.spsr = 0xCAFE_BABE;
+        cpu.reg[PC_INDEX] = 0x00;
+        cpu.flush_pipeline(&mut bus);
+        cpu.step(&mut bus);
+
+        assert_eq!(
+            cpu.spsr, 0xCAFE_BABE,
+            "MSR SPSR in usr mode must be a no-op"
+        );
+    }
+
+    #[test]
+    fn arm_msr_field_mask_scenarios() {
+        // ARM MSR has a 4-bit field mask (bits 19-16: f, s, x, c) selecting
+        // which BYTES of the target PSR are updated. Per ARM ARM §A4.1.39:
+        //   bit 19 (f) → bits 24-31 (NZCV)
+        //   bit 18 (s) → bits 16-23
+        //   bit 17 (x) → bits 8-15
+        //   bit 16 (c) → bits 0-7 (mode/T/I/F)
+        // In user mode only the flags byte is writable. T-bit must never be
+        // settable through MSR.
+        //
+        // Encoding MSR_imm CPSR, #imm:
+        //   cond 0011 0R10 mask 1111 rotate imm
+        // MSR_imm SPSR uses R=1 (bit 22).
+        struct Case {
+            mode: OperatingMode,
+            initial_cpsr_low: u8,           // low 8 bits of CPSR before
+            initial_cpsr_flags: u8,         // NZCV in upper nibble of byte
+            initial_spsr: u32,
+            inst: u32,
+            expected_cpsr_low: u8,
+            expected_cpsr_flags: u8,
+            expected_spsr: u32,
+            label: &'static str,
+        }
+        // mode byte construction: mode bits 0-4, T=bit 5 (0 here), F=bit 6, I=bit 7
+        let svc_low: u8 = 0x13;                  // svc mode, no I/F
+        let usr_low: u8 = 0x10;                  // usr mode
+        let svc_low_irqf: u8 = 0xD3;             // svc + I=1 + F=1
+
+        let cases = [
+            // MSR CPSR_f, #0xF0000000 (rotate=4, imm=0xF) — only flags update
+            Case {
+                mode: OperatingMode::svc, initial_cpsr_low: svc_low,
+                initial_cpsr_flags: 0x00, initial_spsr: 0xDEAD_BEEF,
+                inst: 0xE328_F20F,
+                expected_cpsr_low: svc_low, expected_cpsr_flags: 0xF0,
+                expected_spsr: 0xDEAD_BEEF,
+                label: "MSR CPSR_f sets NZCV; control/spsr untouched",
+            },
+            // MSR CPSR_c, #0x13 (mask=c=0001) in svc — update control byte; allowed
+            Case {
+                mode: OperatingMode::svc, initial_cpsr_low: svc_low_irqf,
+                initial_cpsr_flags: 0x00, initial_spsr: 0,
+                inst: 0xE321_F013,
+                expected_cpsr_low: svc_low, expected_cpsr_flags: 0x00,
+                expected_spsr: 0,
+                label: "MSR CPSR_c clears I/F bits via control byte write (svc allowed)",
+            },
+            // MSR CPSR_c, #0x10 in USR mode — control byte write must be ignored
+            Case {
+                mode: OperatingMode::usr, initial_cpsr_low: usr_low,
+                initial_cpsr_flags: 0x00, initial_spsr: 0,
+                inst: 0xE321_F010,
+                expected_cpsr_low: usr_low, expected_cpsr_flags: 0x00,
+                expected_spsr: 0,
+                label: "MSR CPSR_c in usr mode: control byte write ignored",
+            },
+            // MSR CPSR_f, #0xF0000000 in USR mode — flags ARE writable in usr
+            Case {
+                mode: OperatingMode::usr, initial_cpsr_low: usr_low,
+                initial_cpsr_flags: 0x00, initial_spsr: 0,
+                inst: 0xE328_F20F,
+                expected_cpsr_low: usr_low, expected_cpsr_flags: 0xF0,
+                expected_spsr: 0,
+                label: "MSR CPSR_f in usr mode: flags writable",
+            },
+            // MSR CPSR_fc, #0x13 — both byte masks selected; rotated imm has
+            // only the control byte set, so flag byte clears and control byte writes.
+            Case {
+                mode: OperatingMode::svc, initial_cpsr_low: svc_low_irqf,
+                initial_cpsr_flags: 0xF0, initial_spsr: 0,
+                inst: 0xE329_F013,                          // mask=9 (f+c), rot=0, imm=0x13
+                expected_cpsr_low: svc_low, expected_cpsr_flags: 0x00,
+                expected_spsr: 0,
+                label: "MSR CPSR_fc updates flags + control bytes (both masked, both written)",
+            },
+            // MSR SPSR_f, #0xF0000000 — only SPSR flag byte changes
+            Case {
+                mode: OperatingMode::svc, initial_cpsr_low: svc_low,
+                initial_cpsr_flags: 0x00, initial_spsr: 0x0000_1234,
+                inst: 0xE368_F20F,                          // R=1, mask=8(f)
+                expected_cpsr_low: svc_low, expected_cpsr_flags: 0x00,
+                expected_spsr: 0xF000_1234,
+                label: "MSR SPSR_f updates spsr flag byte only",
+            },
+            // MSR SPSR_fsxc — all four bytes selected. Initial SPSR has T-bit
+            // (bit 5) clear so we can assert the full replacement value 0x10.
+            // (T-bit is unconditionally masked off the write path; original
+            // T survives — exercised in the test above by virtue of mask.)
+            Case {
+                mode: OperatingMode::svc, initial_cpsr_low: svc_low,
+                initial_cpsr_flags: 0x00, initial_spsr: 0xDEAD_BECF,
+                inst: 0xE36F_F010,                          // R=1, mask=F, rot=0, imm=0x10
+                expected_cpsr_low: svc_low, expected_cpsr_flags: 0x00,
+                expected_spsr: 0x0000_0010,
+                label: "MSR SPSR_fsxc replaces all four bytes",
+            },
+        ];
+
+        for c in cases {
+            let mut cpu = CPU::new();
+            let mut bus = TestBus::new(0x1000);
+            bus.write_word_at(0x00, c.inst);
+            bus.write_word_at(0x04, 0xE3A0_0000);
+            bus.write_word_at(0x08, 0xE3A0_0000);
+
+            cpu.cpsr.operating_state = OperatingState::ARM;
+            cpu.set_mode(c.mode);
+            // load initial CPSR low + flag bytes
+            let mut cpsr_word: u32 = u32::from(cpu.cpsr);
+            cpsr_word = (cpsr_word & !0xFF) | (c.initial_cpsr_low as u32);
+            cpsr_word = (cpsr_word & 0x00FF_FFFF) | ((c.initial_cpsr_flags as u32) << 24);
+            cpu.cpsr = cpsr_word.into();
+            cpu.spsr = c.initial_spsr;
+            cpu.reg[PC_INDEX] = 0x00;
+            cpu.flush_pipeline(&mut bus);
+            cpu.step(&mut bus);
+
+            let final_cpsr: u32 = u32::from(cpu.cpsr);
+            assert_eq!(
+                (final_cpsr & 0xFF) as u8, c.expected_cpsr_low,
+                "{} (CPSR low byte)", c.label
+            );
+            assert_eq!(
+                ((final_cpsr >> 24) & 0xFF) as u8, c.expected_cpsr_flags,
+                "{} (CPSR flag byte)", c.label
+            );
+            assert_eq!(cpu.spsr, c.expected_spsr, "{} (SPSR)", c.label);
+        }
+    }
+
+    #[test]
+    fn arm_ldrt_writes_current_mode_bank_not_user_bank() {
+        // LDRT r13, [r0] = 0xE430_D000. Post-indexed (P=0), W=1 makes this
+        // the T-bit form. Per ARM ARM §A4.1.23, the forced user-mode access
+        // applies only to the memory transfer; register-file writes use the
+        // CURRENT mode's bank. On GBA this is observable because r13/r14
+        // are banked across svc/usr/irq/abt/und/fiq.
+        let mut cpu = CPU::new();
+        let mut bus = TestBus::new(0x1000);
+        bus.write_word_at(0x00, 0xE430_D000);
+        bus.write_word_at(0x04, 0xE3A0_0000);
+        bus.write_word_at(0x08, 0xE3A0_0000);
+        bus.write_word_at(0x200, 0xDEAD_BEEF);
+
+        cpu.cpsr.operating_state = OperatingState::ARM;
+        cpu.set_mode(OperatingMode::usr);
+        cpu.reg[SP_INDEX] = 0xAAAA_AAAA;
+        cpu.set_mode(OperatingMode::svc);
+        cpu.reg[SP_INDEX] = 0xBBBB_BBBB;
+
+        cpu.reg[0] = 0x200;
+        cpu.reg[PC_INDEX] = 0x00;
+        cpu.flush_pipeline(&mut bus);
+        cpu.step(&mut bus);
+
+        assert_eq!(
+            cpu.reg[SP_INDEX], 0xDEAD_BEEF,
+            "LDRT must write loaded value to current (svc) bank's r13"
+        );
+
+        cpu.set_mode(OperatingMode::usr);
+        assert_eq!(
+            cpu.reg[SP_INDEX], 0xAAAA_AAAA,
+            "usr-bank r13 must NOT be clobbered by LDRT in svc"
+        );
+    }
+
+    #[test]
+    fn thumb_stmia_empty_rlist_writeback_plus_0x40() {
+        // STMIA r0!, {} = 0xC000. Same empty-rlist quirk on the store path:
+        // store PC at base, writeback = base + 0x40.
+        let mut cpu = CPU::new();
+        let mut bus = TestBus::new(0x1000);
+        bus.write_hword_at(0x00, 0xC000);
+        bus.write_hword_at(0x02, 0x46C0);
+        bus.write_hword_at(0x04, 0x46C0);
+
+        cpu.cpsr.operating_state = OperatingState::THUMB;
+        cpu.cpsr.mode = OperatingMode::sys;
+        cpu.reg[0] = 0x200;
+        cpu.reg[PC_INDEX] = 0x00;
+        cpu.flush_pipeline(&mut bus);
+        cpu.step(&mut bus);
+
+        assert_eq!(
+            cpu.reg[0], 0x240,
+            "STMIA empty rlist: writeback = base + 0x40 (regression: jsmolka THUMB #227)"
+        );
     }
 }

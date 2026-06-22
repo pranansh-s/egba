@@ -89,9 +89,7 @@ impl GBA {
                     self.memory.interrupt.request(irq);
                 }
                 match event {
-                    VideoEvent::HBlank | VideoEvent::HBlankInVBlank => {
-                        self.run_dma(DmaEvent::HBlank)
-                    }
+                    VideoEvent::HBlank => self.run_dma(DmaEvent::HBlank),
                     VideoEvent::VBlank => self.run_dma(DmaEvent::VBlank),
                     _ => {}
                 }
@@ -105,7 +103,6 @@ impl GBA {
         }
 
         self.run_dma(DmaEvent::Immediate);
-        self.memory.system.step();
     }
 
     pub fn step_one_instruction(&mut self) {
@@ -144,7 +141,6 @@ impl GBA {
         }
 
         if power != PowerMode::Stop {
-            self.memory.flush_pending_ticks();
             self.drain_events();
         }
 
@@ -271,6 +267,150 @@ mod tests {
             PowerMode::Active,
             "HALT must wake on VBlank IRQ within one frame; bus_cycles={}",
             gba.bus_cycles() - start
+        );
+    }
+
+    #[test]
+    #[ignore]
+    fn diagnose_jsmolka_arm_run_state() {
+        use crate::bios::Bios;
+        use crate::cartridge::Cartridge;
+        use crate::cpu::cpu::PC_INDEX;
+        use crate::rom::Rom;
+        use std::path::Path;
+        let bios_path = Path::new("../roms/bios.bin");
+        let rom_path = Path::new("../roms/jsmolka/arm.gba");
+        if !bios_path.exists() || !rom_path.exists() {
+            eprintln!("skip: ROM/BIOS not present");
+            return;
+        }
+        let bios_bytes = std::fs::read(bios_path).expect("bios read");
+        let rom_bytes = std::fs::read(rom_path).expect("rom read");
+        let bios = Bios::new(Rom::new(&bios_bytes)).expect("bios");
+        let cart = Cartridge::new(
+            Rom::new(&rom_bytes),
+            &PathBuf::from("/tmp/_jsmolka_arm_diag.sav"),
+        )
+        .expect("cart");
+        let mut gba = GBA::new(bios, cart);
+        for _ in 0..1200 {
+            gba.run_frame();
+        }
+        eprintln!("=== jsmolka arm diag after 1200 frames ===");
+        eprintln!("PC = 0x{:08X}", gba.cpu.reg[PC_INDEX]);
+        eprintln!("cpsr = 0x{:08X}", u32::from(gba.cpu.cpsr));
+        eprintln!("state = {:?}", gba.cpu.cpsr.operating_state);
+        eprintln!("mode  = {:?}", gba.cpu.cpsr.mode);
+        eprintln!("last instr count = {}", gba.last_profile.instructions);
+        eprintln!("last cycle count = {}", gba.last_profile.cycles);
+        eprintln!("last halt steps  = {}", gba.last_profile.halt_steps);
+        for i in 0..16 {
+            eprintln!("  r{:>2} = 0x{:08X}", i, gba.cpu.reg[i]);
+        }
+        let pc = gba.cpu.reg[PC_INDEX];
+        eprintln!("mem around PC:");
+        for off in [-16i32, -12, -8, -4, 0, 4, 8, 12].iter() {
+            let a = pc.wrapping_add(*off as u32);
+            eprintln!("  [0x{:08X}] = 0x{:08X}", a, gba.memory.read_word(a));
+        }
+        eprintln!("DISPCNT (0x4000000) = 0x{:04X}", gba.memory.read_hword(0x0400_0000));
+        eprintln!("VCOUNT  (0x4000006) = 0x{:04X}", gba.memory.read_hword(0x0400_0006));
+        eprintln!("IE      (0x4000200) = 0x{:04X}", gba.memory.read_hword(0x0400_0200));
+        eprintln!("IF      (0x4000202) = 0x{:04X}", gba.memory.read_hword(0x0400_0202));
+        eprintln!("IME     (0x4000208) = 0x{:04X}", gba.memory.read_hword(0x0400_0208));
+        panic!("diagnostic dump only - inspect stderr above");
+    }
+
+    #[test]
+    fn ags_prescaler_loop_yields_4096_cycles_in_iwram() {
+        let mut gba = build_gba();
+
+        gba.memory.write_word(0x0300_0000, 0xE250_0001);
+        gba.memory.write_word(0x0300_0004, 0x1AFF_FFFD);
+
+        gba.cpu.reg[0] = 0x400;
+        gba.cpu.reg[crate::cpu::cpu::PC_INDEX] = 0x0300_0000;
+        gba.cpu.cpsr.operating_state = crate::cpu::psr::OperatingState::ARM;
+        gba.cpu.cpsr.mode = crate::cpu::psr::OperatingMode::sys;
+        gba.cpu.flush_pipeline(&mut gba.memory);
+
+        gba.memory.write_word(0x0400_0100, 0x0000_0000);
+        let cycles_before_enable = gba.memory.bus_cycles;
+        gba.memory.write_word(0x0400_0100, 0x0080_0000);
+
+        for _ in 0..3000 {
+            gba.step_one_instruction();
+            if gba.cpu.reg[0] == 0 && gba.cpu.reg[crate::cpu::cpu::PC_INDEX] >= 0x0300_0008 {
+                break;
+            }
+        }
+
+        let counter = gba.memory.read_hword(0x0400_0100);
+        let cycles_elapsed = gba.memory.bus_cycles - cycles_before_enable;
+        assert!(
+            (0xFF0..=0x1010).contains(&counter),
+            "AGS-style 0x400 subs/bne loop should yield ~0x1000 timer ticks (got {:#x}, cycles elapsed {})",
+            counter,
+            cycles_elapsed
+        );
+    }
+
+    #[test]
+    fn timer0_overflow_irq_wakes_halt() {
+        let mut gba = build_gba();
+        gba.memory.write_byte(0x0400_0100, 0xF0);
+        gba.memory.write_byte(0x0400_0101, 0xFF);
+        gba.memory.write_byte(0x0400_0102, 0b1100_0000);
+        gba.memory.write_byte(0x0400_0200, 0x08);
+        gba.memory.write_byte(0x0400_0208, 0x01);
+        gba.cpu.cpsr.irq_disable_bit = false;
+        gba.memory.write_byte(0x0400_0301, 0x00);
+        assert_eq!(gba.memory.system.get_power_mode(), PowerMode::Halt);
+        let start = gba.bus_cycles();
+        let limit = start + 1000;
+        let mut prof = FrameProfile::default();
+        while gba.bus_cycles() < limit {
+            gba.tick_one(&mut prof, limit);
+            if gba.memory.system.get_power_mode() == PowerMode::Active {
+                break;
+            }
+        }
+        assert_eq!(
+            gba.memory.system.get_power_mode(),
+            PowerMode::Active,
+            "HALT must wake on Timer0 overflow IRQ within ~20 cycles (reload=0xFFF0 = 16 ticks + 2 delay); bus_cycles={}",
+            gba.bus_cycles() - start
+        );
+    }
+
+    #[test]
+    fn hblank_dma_fires_only_on_visible_lines() {
+        let mut gba = build_gba();
+
+        for i in 0..230u32 {
+            gba.memory.write_word(0x0200_0000 + i * 4, i + 1);
+        }
+
+        let src_base: u32 = 0x0200_0000;
+        let dst_base: u32 = 0x0300_0000;
+
+        for i in 0..4 {
+            gba.memory.write_byte(0x0400_00B0 + i, (src_base >> (i * 8)) as u8);
+        }
+        for i in 0..4 {
+            gba.memory.write_byte(0x0400_00B4 + i, (dst_base >> (i * 8)) as u8);
+        }
+        gba.memory.write_byte(0x0400_00B8, 1);
+        gba.memory.write_byte(0x0400_00B9, 0);
+        gba.memory.write_byte(0x0400_00BA, 0x40);
+        gba.memory.write_byte(0x0400_00BB, 0xA6);
+
+        gba.run_frame();
+
+        let last_value = gba.memory.read_word(dst_base);
+        assert_eq!(
+            last_value, 160,
+            "HBlank-DMA must fire exactly 160 times (visible lines), not during VBlank lines 160-227"
         );
     }
 

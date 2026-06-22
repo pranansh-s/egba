@@ -120,6 +120,7 @@ impl CPU {
         bus.notify_pc(self.reg[PC_INDEX]);
         self.pipeline[1] = self.fetch(bus);
         self.pipeline[2] = self.fetch(bus);
+        bus.tick(1);
         self.pipeline_dirty = true;
     }
 }

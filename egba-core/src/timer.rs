@@ -168,6 +168,17 @@ mod tests {
     }
 
     #[test]
+    fn timer_disable_freezes_counter() {
+        let mut t = Timers::default();
+        enable_timer(&mut t, 0, 0b1000_0000, 0xFFF0);
+        t.step(20);
+        let before = t.timers[0].counter;
+        t.write_byte(0x102, 0x00);
+        t.step(100);
+        assert_eq!(t.timers[0].counter, before, "disabled timer must not advance");
+    }
+
+    #[test]
     fn timer_prescaler_64_emits_overflow_every_64_cycles() {
         let mut t = Timers::default();
         enable_timer(&mut t, 2, 0b1000_0001, 0xFFFF);

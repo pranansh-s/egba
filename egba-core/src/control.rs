@@ -118,8 +118,6 @@ impl Default for SystemControl {
 }
 
 impl SystemControl {
-    pub(crate) fn step(&mut self) {}
-
     pub(crate) fn update_power(&mut self, power: PowerMode) {
         self.power = power;
     }
@@ -211,10 +209,7 @@ impl Bus for SystemControl {
                 self.postflg = (self.postflg & 0x01) | (value & 0x01);
             }
             0x301 => {
-                self.power = match value.bit(7) {
-                    false => PowerMode::Halt,
-                    true => PowerMode::Stop,
-                };
+                self.power = if value.bit(7) { PowerMode::Stop } else { PowerMode::Halt };
             }
             _ => {}
         }
