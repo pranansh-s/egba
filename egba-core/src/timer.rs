@@ -3,6 +3,7 @@ use bit::BitIndex;
 use crate::{bus::Bus, control::InterruptType};
 
 const PRESCALER_DIVS: [u32; 4] = [1, 64, 256, 1024];
+const TIMER_START_DELAY: u8 = 2;
 
 #[derive(Default, Clone)]
 struct Timer {
@@ -10,6 +11,7 @@ struct Timer {
     reload: u16,
     control: u16,
     internal_counter: u32,
+    start_delay: u8,
 }
 
 impl Timer {
@@ -57,7 +59,17 @@ impl Timers {
                 continue;
             }
 
-            self.timers[i].internal_counter += cycles;
+            let mut remaining = cycles;
+            if self.timers[i].start_delay > 0 {
+                let consumed = (self.timers[i].start_delay as u32).min(remaining);
+                self.timers[i].start_delay -= consumed as u8;
+                remaining -= consumed;
+                if remaining == 0 {
+                    continue;
+                }
+            }
+
+            self.timers[i].internal_counter += remaining;
             let prescaler = self.timers[i].prescaler();
 
             while self.timers[i].internal_counter >= prescaler {
@@ -124,7 +136,10 @@ impl Timers {
             }
             let prescaler = t.prescaler();
             let ticks_left = (0x10000u32 - t.counter as u32).saturating_mul(prescaler);
-            let cycles = ticks_left.saturating_sub(t.internal_counter).max(1);
+            let cycles = ticks_left
+                .saturating_sub(t.internal_counter)
+                .saturating_add(t.start_delay as u32)
+                .max(1);
             best = Some(best.map_or(cycles, |b| b.min(cycles)));
         }
         best
@@ -145,8 +160,8 @@ mod tests {
     #[test]
     fn timer0_cascade_bit_is_ignored() {
         let cases: [(u8, u32, u16, &str); 2] = [
-            (0b1000_0000, 100, 100, "no cascade bit, prescaler 1"),
-            (0b1000_0100, 100, 100, "cascade bit set on T0 -> still ticks"),
+            (0b1000_0000, 102, 100, "no cascade bit, prescaler 1 (-2 startup)"),
+            (0b1000_0100, 102, 100, "cascade bit set on T0 -> still ticks"),
         ];
         for (ctrl, cycles, expected, label) in cases {
             let mut t = Timers::default();
@@ -161,8 +176,8 @@ mod tests {
         let mut t = Timers::default();
         enable_timer(&mut t, 0, 0b1000_0000, 0xFFFE);
         enable_timer(&mut t, 1, 0b1000_0100, 0);
-        let of = t.step(2);
-        assert_ne!(of & 1, 0, "T0 must overflow after 2 ticks");
+        let of = t.step(4);
+        assert_ne!(of & 1, 0, "T0 must overflow after 2-cycle startup + 2 ticks");
         assert_eq!(t.timers[0].counter, 0xFFFE, "T0 reloaded");
         assert_eq!(t.timers[1].counter, 1, "T1 cascades on T0 overflow");
     }
@@ -182,12 +197,30 @@ mod tests {
     fn timer_prescaler_64_emits_overflow_every_64_cycles() {
         let mut t = Timers::default();
         enable_timer(&mut t, 2, 0b1000_0001, 0xFFFF);
+        let of = t.step(2);
+        assert_eq!(of, 0, "2-cycle startup consumed, no tick yet");
         let of = t.step(64);
-        assert_ne!(of & (1 << 2), 0, "T2 must overflow once at 64 cycles");
+        assert_ne!(of & (1 << 2), 0, "T2 must overflow 64 cycles after startup");
         let of = t.step(63);
         assert_eq!(of & (1 << 2), 0, "T2 must not overflow within next 63 cycles");
         let of = t.step(1);
         assert_ne!(of & (1 << 2), 0, "T2 overflows at next 64-cycle boundary");
+    }
+
+    #[test]
+    fn timer_start_delay_blocks_first_two_cycles() {
+        let cases: [(u32, u16, &str); 4] = [
+            (1, 0, "1 cycle into startup -> still delayed"),
+            (2, 0, "2 cycles exhausts startup, no tick yet"),
+            (3, 1, "3 cycles -> startup done + 1 tick at prescaler 1"),
+            (10, 8, "10 cycles -> startup done + 8 ticks"),
+        ];
+        for (cycles, expected, label) in cases {
+            let mut t = Timers::default();
+            enable_timer(&mut t, 0, 0b1000_0000, 0);
+            t.step(cycles);
+            assert_eq!(t.timers[0].counter, expected, "{label}");
+        }
     }
 }
 
@@ -238,6 +271,7 @@ impl Bus for Timers {
                 if !was_enabled && now_enabled {
                     self.timers[timer_idx].counter = self.timers[timer_idx].reload;
                     self.timers[timer_idx].internal_counter = 0;
+                    self.timers[timer_idx].start_delay = TIMER_START_DELAY;
                 }
                 self.refresh_any_active();
             }

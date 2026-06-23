@@ -276,7 +276,7 @@ mod tests {
                 HBlank => hblank += 1,
                 HBlankInVBlank => hblank_in_vblank += 1,
                 VBlank => vblank += 1,
-                None => {}
+                None | VideoCapture | VideoCaptureEnd => {}
             }
         });
         assert_eq!(hblank, 160, "one HBlank event per visible line");

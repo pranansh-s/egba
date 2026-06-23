@@ -12,5 +12,6 @@ mod bus;
 mod control;
 mod dma;
 mod memory;
+mod serial;
 mod timer;
 mod video;

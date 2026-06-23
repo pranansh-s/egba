@@ -91,6 +91,8 @@ impl GBA {
                 match event {
                     VideoEvent::HBlank => self.run_dma(DmaEvent::HBlank),
                     VideoEvent::VBlank => self.run_dma(DmaEvent::VBlank),
+                    VideoEvent::VideoCapture => self.run_dma(DmaEvent::VideoCapture),
+                    VideoEvent::VideoCaptureEnd => self.memory.dma.disable_video_capture(),
                     _ => {}
                 }
             }

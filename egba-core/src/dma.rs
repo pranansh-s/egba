@@ -8,6 +8,7 @@ pub(crate) enum DmaEvent {
     VBlank,
     HBlank,
     Special,
+    VideoCapture,
 }
 
 #[derive(Default, Clone)]
@@ -70,6 +71,15 @@ impl Dma {
         self.channels.iter().any(|c| c.enabled() && c.running)
     }
 
+    pub(crate) fn disable_video_capture(&mut self) {
+        if self.channels[3].enabled()
+            && self.channels[3].start_timing() == DmaEvent::Special
+        {
+            self.channels[3].control.set_bit(15, false);
+            self.channels[3].running = false;
+        }
+    }
+
     pub(crate) fn run(&mut self, event: DmaEvent, memory: &mut dyn DmaMemory) -> u8 {
         let mut irq_flags: u8 = 0;
 
@@ -78,12 +88,21 @@ impl Dma {
                 continue;
             }
 
-            if self.channels[i].start_timing() != event {
+            let configured = self.channels[i].start_timing();
+            let matches_event = match (configured, event) {
+                (DmaEvent::Special, DmaEvent::VideoCapture) => i == 3,
+                (DmaEvent::Special, DmaEvent::Special) => i == 1 || i == 2,
+                (DmaEvent::Special, _) => false,
+                (_, DmaEvent::VideoCapture) | (_, DmaEvent::Special) => false,
+                (a, b) => a == b,
+            };
+            if !matches_event {
                 continue;
             }
 
             let is_fifo_dma = (i == 1 || i == 2)
-                && self.channels[i].start_timing() == DmaEvent::Special;
+                && configured == DmaEvent::Special
+                && matches!(self.channels[i].internal_dst, 0x0400_00A0 | 0x0400_00A4);
 
             if is_fifo_dma {
                 self.execute_fifo_transfer(i, memory);
@@ -95,17 +114,13 @@ impl Dma {
                 irq_flags |= 1 << i;
             }
 
-            if self.channels[i].repeat() && event != DmaEvent::Immediate {
-                self.channels[i].internal_count = if self.channels[i].count == 0 {
-                    if i == 3 {
-                        0x10000
-                    } else {
-                        0x4000
-                    }
-                } else {
-                    self.channels[i].count
-                };
-                if self.channels[i].dst_control() == 3 {
+            let stays_armed = is_fifo_dma
+                || (self.channels[i].repeat() && event != DmaEvent::Immediate);
+
+            if stays_armed {
+                self.channels[i].internal_count =
+                    Self::latch_count(i, self.channels[i].count);
+                if !is_fifo_dma && self.channels[i].dst_control() == 3 {
                     self.channels[i].internal_dst = self.channels[i].dst;
                 }
             } else {
@@ -115,6 +130,19 @@ impl Dma {
         }
 
         irq_flags
+    }
+
+    fn count_mask(ch: usize) -> u32 {
+        if ch == 3 { 0xFFFF } else { 0x3FFF }
+    }
+
+    fn count_max(ch: usize) -> u32 {
+        if ch == 3 { 0x1_0000 } else { 0x4000 }
+    }
+
+    fn latch_count(ch: usize, raw: u32) -> u32 {
+        let v = raw & Self::count_mask(ch);
+        if v == 0 { Self::count_max(ch) } else { v }
     }
 
     fn execute_transfer(&mut self, ch: usize, memory: &mut dyn DmaMemory) {
@@ -273,15 +301,8 @@ impl Bus for Dma {
                 if !was_enabled && now_enabled {
                     self.channels[ch].internal_src = self.channels[ch].src;
                     self.channels[ch].internal_dst = self.channels[ch].dst;
-                    self.channels[ch].internal_count = if self.channels[ch].count == 0 {
-                        if ch == 3 {
-                            0x10000
-                        } else {
-                            0x4000
-                        }
-                    } else {
-                        self.channels[ch].count
-                    };
+                    self.channels[ch].internal_count =
+                        Self::latch_count(ch, self.channels[ch].count);
                     self.channels[ch].running = true;
                 }
             }
@@ -410,6 +431,78 @@ mod tests {
         assert_eq!(Dma::dst_addr_mask(1), 0x07FF_FFFF);
         assert_eq!(Dma::dst_addr_mask(2), 0x07FF_FFFF);
         assert_eq!(Dma::dst_addr_mask(3), 0x0FFF_FFFF);
+    }
+
+    #[test]
+    fn latch_count_masks_per_channel_and_zero_means_max() {
+        let cases: [(usize, u32, u32, &str); 6] = [
+            (0, 0x0000, 0x4000, "DMA0 count=0 -> 0x4000 (max 14-bit)"),
+            (0, 0x4001, 0x0001, "DMA0 count=0x4001 -> mask to 14-bit = 1"),
+            (1, 0x3FFF, 0x3FFF, "DMA1 count=0x3FFF passthrough"),
+            (2, 0xFFFF, 0x3FFF, "DMA2 count=0xFFFF -> mask drops top 2 bits"),
+            (3, 0x0000, 0x1_0000, "DMA3 count=0 -> 0x10000 (max 16-bit)"),
+            (3, 0xFFFF, 0xFFFF, "DMA3 count=0xFFFF passthrough"),
+        ];
+        for (ch, raw, expected, label) in cases {
+            assert_eq!(Dma::latch_count(ch, raw), expected, "{label}");
+        }
+    }
+
+    fn setup_dma_ch(dma: &mut Dma, ch: usize, src: u32, dst: u32, count: u16, ctrl_h: u16) {
+        let base: u32 = 0xB0 + (ch as u32) * 12;
+        for (i, &b) in src.to_le_bytes().iter().enumerate() {
+            dma.write_byte(base + i as u32, b);
+        }
+        for (i, &b) in dst.to_le_bytes().iter().enumerate() {
+            dma.write_byte(base + 4 + i as u32, b);
+        }
+        dma.write_byte(base + 8, count as u8);
+        dma.write_byte(base + 9, (count >> 8) as u8);
+        dma.write_byte(base + 10, ctrl_h as u8);
+        dma.write_byte(base + 11, (ctrl_h >> 8) as u8);
+    }
+
+    #[test]
+    fn dma1_special_with_non_fifo_dst_takes_normal_transfer_path() {
+        let mut dma = Dma::default();
+        let mut mem = fake_mem(0x0200_0000, &[111, 222]);
+        let ctrl_h: u16 = 0x8000 | 0x0400 | 0x3000;
+        setup_dma_ch(&mut dma, 1, 0x0200_0000, 0x0300_0000, 2, ctrl_h);
+        dma.run(DmaEvent::Special, &mut mem);
+        assert_eq!(
+            mem.writes.len(),
+            2,
+            "non-FIFO dst on DMA1+Special must run the user-requested 2 words, not a 4-word FIFO burst"
+        );
+    }
+
+    #[test]
+    fn dma1_fifo_dst_runs_four_word_burst_regardless_of_32bit_bit() {
+        let mut dma = Dma::default();
+        let mut mem = fake_mem(0x0200_0000, &[1, 2, 3, 4]);
+        let ctrl_h: u16 = 0x8000 | 0x3000;
+        setup_dma_ch(&mut dma, 1, 0x0200_0000, 0x0400_00A0, 1, ctrl_h);
+        dma.run(DmaEvent::Special, &mut mem);
+        assert_eq!(mem.writes.len(), 4, "FIFO DMA writes 4 words");
+        for w in &mem.writes {
+            assert_eq!(w.0, 0x0400_00A0, "FIFO dst is fixed at FIFO_A");
+        }
+    }
+
+    #[test]
+    fn dma1_fifo_re_arms_on_next_special_even_without_repeat_bit() {
+        let mut dma = Dma::default();
+        let mut mem = fake_mem(0x0200_0000, &[1, 2, 3, 4, 5, 6, 7, 8]);
+        let ctrl_h: u16 = 0x8000 | 0x3000;
+        setup_dma_ch(&mut dma, 1, 0x0200_0000, 0x0400_00A0, 1, ctrl_h);
+        dma.run(DmaEvent::Special, &mut mem);
+        assert_eq!(mem.writes.len(), 4, "first FIFO burst");
+        dma.run(DmaEvent::Special, &mut mem);
+        assert_eq!(
+            mem.writes.len(),
+            8,
+            "FIFO DMA must auto-repeat across Special triggers regardless of CNT_H repeat bit"
+        );
     }
 }
 

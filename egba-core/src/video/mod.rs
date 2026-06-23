@@ -23,6 +23,8 @@ pub(crate) enum VideoEvent {
     HBlank,
     HBlankInVBlank,
     VBlank,
+    VideoCapture,
+    VideoCaptureEnd,
 }
 
 pub(crate) struct Video {
@@ -179,10 +181,19 @@ impl Video {
                 self.dot_cycle += take - 1;
                 remaining -= take - 1;
             }
+            let vcount_before = self.vcount;
             let (event, irq) = self.step();
             remaining -= 1;
             if !matches!(event, VideoEvent::None) || irq.is_some() {
                 sink(event, irq);
+            }
+            if matches!(event, VideoEvent::HBlank | VideoEvent::HBlankInVBlank)
+                && (2..=161).contains(&vcount_before)
+            {
+                sink(VideoEvent::VideoCapture, None);
+            }
+            if vcount_before == 161 && self.vcount == 162 {
+                sink(VideoEvent::VideoCaptureEnd, None);
             }
         }
     }
